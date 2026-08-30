@@ -58,6 +58,7 @@ async def generate_music_lyria(lyrics: str, output_path: str, api_key: str) -> s
 
     for attempt in range(max_retries):
         try:
+            # Lyria は generate_content でも動作する（公式 Cookbook 準拠）
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=LYRIA_MODEL,
@@ -95,10 +96,10 @@ async def generate_music_lyria(lyrics: str, output_path: str, api_key: str) -> s
                 raise
             raise Exception(f"楽曲生成エラー: {err_str}")
 
+
 async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str:
     """Gemini TTS で歌詞を読み上げる（無料）"""
     from google import genai
-    import base64
 
     if not api_key:
         raise Exception("Gemini API キーが指定されていません")
@@ -113,6 +114,8 @@ async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str
 
     for attempt in range(max_retries):
         try:
+            # 公式ドキュメント準拠: Interactions API TTS
+            # https://ai.google.dev/gemini-api/docs/speech-generation
             interaction = await asyncio.to_thread(
                 client.interactions.create,
                 model=TTS_MODEL,
@@ -123,6 +126,7 @@ async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str
                         {"voice": TTS_VOICE}
                     ]
                 },
+                store=False,
             )
 
             if not interaction.output_audio or not interaction.output_audio.data:
@@ -152,6 +156,7 @@ async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str
             if "返されませんでした" in err_str:
                 raise
             raise Exception(f"TTS生成エラー: {err_str}")
+
 
 async def generate_music(lyrics: str, output_path: str, api_key: str,
                          quality: str = "standard") -> str:

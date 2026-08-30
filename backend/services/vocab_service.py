@@ -8,6 +8,7 @@ docs/design/lyrics-design.md §6 のフォーマットに従う。
 import os
 import json
 import re
+import base64
 import asyncio
 from typing import List, Dict
 
@@ -109,7 +110,6 @@ async def extract_word_pairs(
         最大 MAX_WORDS_PER_SONG 件（超過分は先頭から採用）
     """
     from google import genai
-    from google.genai import types
 
     if not api_key:
         raise Exception("Gemini API キーが指定されていません")
@@ -122,10 +122,9 @@ async def extract_word_pairs(
     with open(image_path, "rb") as f:
         image_bytes = f.read()
 
-    parts = [
-        types.Part.from_text(text=prompt),
-        types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-    ]
+    # 公式ドキュメント準拠: Interactions API の inline image 形式
+    # https://ai.google.dev/gemini-api/docs/image-understanding
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     max_retries = 5
     retry_delay = 4.0
@@ -135,11 +134,18 @@ async def extract_word_pairs(
             interaction = await asyncio.to_thread(
                 client.interactions.create,
                 model=GEMINI_MODEL,
-                input=parts,
+                input=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image",
+                        "data": image_b64,
+                        "mime_type": mime_type,
+                    },
+                ],
                 generation_config={
                     "thinking_level": "minimal",
-                    "max_output_tokens": 2000,
                 },
+                store=False,
             )
             text = (interaction.output_text or "").strip()
             pairs = _parse_word_pairs(text)
