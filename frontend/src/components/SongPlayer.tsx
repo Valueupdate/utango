@@ -9,17 +9,17 @@ interface SongPlayerProps {
   lyrics: string;
   wordPairs: WordPair[];
   onReset: () => void;
+  onEditLyrics: () => void;
 }
 
 type Tab = "words" | "lyrics";
 
-export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset }: SongPlayerProps) {
-  const [tab, setTab] = useState<Tab>("words");
+export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset, onEditLyrics }: SongPlayerProps) {
+  const [tab, setTab] = useState<Tab>("lyrics");
   const audioUrl = `${apiUrl}/download/${jobId}`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* 完成メッセージ + プレイヤー */}
       <div
         style={{
           borderRadius: 16,
@@ -34,17 +34,11 @@ export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset }: SongPl
           暗記ソングができました！
         </h2>
         <p style={{ fontSize: 13, color: "var(--muted-foreground)", margin: "0 0 16px" }}>
-          歌を聴きながら {wordPairs.length} 個の単語を覚えよう
+          歌を聴きながら覚えよう
         </p>
-        <audio
-          src={audioUrl}
-          controls
-          autoPlay
-          style={{ width: "100%" }}
-        />
+        <audio src={audioUrl} controls autoPlay style={{ width: "100%" }} />
       </div>
 
-      {/* タブ切り替え */}
       <div
         style={{
           display: "flex",
@@ -55,8 +49,8 @@ export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset }: SongPl
         }}
       >
         {([
-          { key: "words" as Tab, label: "📝 単語リスト" },
           { key: "lyrics" as Tab, label: "🎼 歌詞" },
+          { key: "words" as Tab, label: "📝 単語リスト" },
         ]).map((t) => (
           <button
             key={t.key}
@@ -78,7 +72,23 @@ export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset }: SongPl
         ))}
       </div>
 
-      {/* 単語リスト */}
+      {tab === "lyrics" && (
+        <div
+          style={{
+            borderRadius: 16,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            padding: 18,
+            fontSize: 14,
+            lineHeight: 1.9,
+            whiteSpace: "pre-wrap",
+            color: "var(--foreground)",
+          }}
+        >
+          {lyrics}
+        </div>
+      )}
+
       {tab === "words" && (
         <div
           style={{
@@ -106,40 +116,40 @@ export function SongPlayer({ apiUrl, jobId, lyrics, wordPairs, onReset }: SongPl
         </div>
       )}
 
-      {/* 歌詞 */}
-      {tab === "lyrics" && (
-        <div
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <button
+          onClick={onEditLyrics}
           style={{
-            borderRadius: 16,
-            background: "var(--card)",
+            width: "100%",
+            padding: "14px",
+            borderRadius: 12,
             border: "1px solid var(--border)",
-            padding: 18,
-            fontSize: 14,
-            lineHeight: 1.9,
-            whiteSpace: "pre-wrap",
+            background: "var(--card)",
             color: "var(--foreground)",
+            fontSize: 15,
+            fontWeight: 600,
+            cursor: "pointer",
           }}
         >
-          {lyrics}
-        </div>
-      )}
-
-      {/* もう1曲作る */}
-      <button
-        onClick={onReset}
-        style={{
-          padding: "14px",
-          borderRadius: 12,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          color: "var(--foreground)",
-          fontSize: 15,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        ＋ もう1曲つくる
-      </button>
+          ✏️ 歌詞を直してもう一度作る
+        </button>
+        <button
+          onClick={onReset}
+          style={{
+            width: "100%",
+            padding: "14px",
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            background: "var(--card)",
+            color: "var(--muted-foreground)",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          ＋ 別の単語帳でもう1曲つくる
+        </button>
+      </div>
     </div>
   );
 }

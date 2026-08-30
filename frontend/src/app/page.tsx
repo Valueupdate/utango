@@ -3,10 +3,17 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { UploadArea } from "@/components/UploadArea";
 import { ApiKeyInput } from "@/components/ApiKeyInput";
-import { ProgressView } from "@/components/ProgressView";
 import { SongPlayer } from "@/components/SongPlayer";
 
-export type AppState = "idle" | "ready" | "processing" | "done" | "error";
+export type AppState =
+  | "idle"
+  | "ready"
+  | "extracting"
+  | "editing"
+  | "generating-lyrics"
+  | "singing"
+  | "done"
+  | "error";
 export type Mode = "word" | "sentence";
 
 export interface WordPair {
@@ -28,47 +35,36 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
   const [apiKey, setApiKey] = useState<string>("");
-  const [progress, setProgress] = useState<number>(0);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [jobId, setJobId] = useState<string>("");
-  const [lyrics, setLyrics] = useState<string>("");
   const [wordPairs, setWordPairs] = useState<WordPair[]>([]);
+  const [selectedPairs, setSelectedPairs] = useState<boolean[]>([]);
+  const [lyrics, setLyrics] = useState<string>("");
+  const [editedLyrics, setEditedLyrics] = useState<string>("");
+  const [jobId, setJobId] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [statusMessage, setStatusMessage] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
-  // 起動時に保存済みキーを復元
   useEffect(() => {
     try {
       const saved = localStorage.getItem(API_KEY_STORAGE);
       if (saved) setApiKey(saved);
-    } catch {
-      // localStorage が使えない環境では無視
-    }
+    } catch {}
   }, []);
 
   const handleApiKeyChange = useCallback((key: string) => {
     setApiKey(key);
-    try {
-      localStorage.setItem(API_KEY_STORAGE, key);
-    } catch {
-      // 保存できなくても続行可能
-    }
-  }, []);
-
-  const addLog = useCallback((step: string, message: string) => {
-    setLogs((prev) => [...prev, { step, message }]);
+    try { localStorage.setItem(API_KEY_STORAGE, key); } catch {}
   }, []);
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     setFile(selectedFile);
     setPreviewUrl(URL.createObjectURL(selectedFile));
     setState("ready");
-    setLogs([]);
-    setProgress(0);
     setErrorMessage("");
-    setJobId("");
-    setLyrics("");
     setWordPairs([]);
+    setLyrics("");
+    setEditedLyrics("");
+    setJobId("");
   }, []);
 
   const handleRemoveFile = useCallback(() => {
@@ -77,17 +73,14 @@ export default function Home() {
     setState("idle");
   }, []);
 
-  // --- U-01: APIキーが入力済みかどうか ---
   const hasApiKey = apiKey.trim().length > 0;
-  // ボタンを有効にする条件: ファイル選択済み＋APIキー入力済み
   const canGenerate = state === "ready" && hasApiKey;
 
-  const handleGenerate = useCallback(async () => {
+  // ─── Step 1: 画像から単語を抽出 ─────────────────────
+  const handleExtract = useCallback(async () => {
     if (!file || !apiKey.trim()) return;
-
-    setState("processing");
-    setProgress(0);
-    setLogs([]);
+    setState("extracting");
+    setStatusMessage("画像から単語を読み取っています...");
     setErrorMessage("");
 
     try {
@@ -96,14 +89,88 @@ export default function Home() {
       formData.append("mode", mode);
       formData.append("api_key", apiKey.trim());
 
-      const res = await fetch(`${API_URL}/generate`, {
+      const res = await fetch(`${API_URL}/extract`, {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || "アップロードに失敗しました");
+        throw new Error(err.detail || "単語の読み取りに失敗しました");
+      }
+
+      const data = await res.json();
+      const pairs: WordPair[] = data.word_pairs || [];
+      if (pairs.length === 0) {
+        throw new Error("単語が見つかりませんでした。別の画像を試してください。");
+      }
+      setWordPairs(pairs);
+      setSelectedPairs(pairs.map(() => true));
+      setState("editing");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "不明なエラー";
+      setErrorMessage(message);
+      setState("error");
+    }
+  }, [file, apiKey, mode]);
+
+  // ─── Step 2: 歌詞を生成（何度でも呼べる） ──────────
+  const handleGenerateLyrics = useCallback(async () => {
+    const selected = wordPairs.filter((_, i) => selectedPairs[i]);
+    if (selected.length === 0) return;
+
+    setState("generating-lyrics");
+    setStatusMessage("キャッチーな歌詞を作っています...");
+    setErrorMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("api_key", apiKey.trim());
+      formData.append("mode", mode);
+      formData.append("word_pairs_json", JSON.stringify(selected));
+
+      const res = await fetch(`${API_URL}/lyrics`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "歌詞の生成に失敗しました");
+      }
+
+      const data = await res.json();
+      setLyrics(data.lyrics || "");
+      setEditedLyrics(data.lyrics || "");
+      setState("editing");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "不明なエラー";
+      setErrorMessage(message);
+      setState("editing");
+    }
+  }, [wordPairs, selectedPairs, apiKey, mode]);
+
+  // ─── Step 3: 歌を作る（SSE） ───────────────────────
+  const handleSing = useCallback(async () => {
+    if (!editedLyrics.trim()) return;
+
+    setState("singing");
+    setStatusMessage("歌を作っています...");
+    setErrorMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("api_key", apiKey.trim());
+      formData.append("lyrics", editedLyrics.trim());
+
+      const res = await fetch(`${API_URL}/sing`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "楽曲生成の開始に失敗しました");
       }
 
       const data = await res.json();
@@ -138,13 +205,9 @@ export default function Home() {
           try {
             const event = JSON.parse(line.slice(6));
             if (event.step === "keepalive") continue;
-
-            if (event.progress >= 0) setProgress(event.progress);
-            if (event.message) addLog(event.step, event.message);
+            if (event.message) setStatusMessage(event.message);
 
             if (event.step === "done") {
-              setLyrics(event.lyrics || "");
-              setWordPairs(event.word_pairs || []);
               setState("done");
               return;
             }
@@ -161,22 +224,41 @@ export default function Home() {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : "不明なエラー";
       setErrorMessage(message);
-      setState("error");
+      setState("editing");
     }
-  }, [file, apiKey, mode, addLog]);
+  }, [editedLyrics, apiKey]);
 
+  // ─── リセット ───────────────────────────────────────
   const handleReset = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
     setFile(null);
     setPreviewUrl("");
     setState("idle");
-    setProgress(0);
-    setLogs([]);
-    setJobId("");
-    setLyrics("");
     setWordPairs([]);
+    setSelectedPairs([]);
+    setLyrics("");
+    setEditedLyrics("");
+    setJobId("");
+    setErrorMessage("");
+    setStatusMessage("");
+  }, []);
+
+  // 歌詞を直してもう一度（done → editing に戻る）
+  const handleBackToEdit = useCallback(() => {
+    setState("editing");
+    setJobId("");
     setErrorMessage("");
   }, []);
+
+  const togglePair = (index: number) => {
+    setSelectedPairs((prev) => {
+      const next = [...prev];
+      next[index] = !next[index];
+      return next;
+    });
+  };
+
+  const selectedCount = selectedPairs.filter(Boolean).length;
 
   const modeButtonStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
@@ -190,9 +272,32 @@ export default function Home() {
     cursor: "pointer",
   });
 
+  const btnPrimary: React.CSSProperties = {
+    width: "100%",
+    padding: "14px",
+    borderRadius: 12,
+    border: "none",
+    background: "var(--primary)",
+    color: "var(--primary-foreground)",
+    fontSize: 16,
+    fontWeight: 700,
+    cursor: "pointer",
+  };
+
+  const btnSecondary: React.CSSProperties = {
+    width: "100%",
+    padding: "14px",
+    borderRadius: 12,
+    border: "1px solid var(--border)",
+    background: "var(--card)",
+    color: "var(--foreground)",
+    fontSize: 15,
+    fontWeight: 600,
+    cursor: "pointer",
+  };
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      {/* ヘッダー */}
       <header
         style={{
           padding: "16px 20px",
@@ -204,15 +309,10 @@ export default function Home() {
         }}
       >
         <span style={{ fontSize: 24 }}>🎵</span>
-        <span style={{ fontSize: 20, fontWeight: 700, color: "var(--primary)" }}>
-          utango
-        </span>
-        <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
-          うたんご
-        </span>
+        <span style={{ fontSize: 20, fontWeight: 700, color: "var(--primary)" }}>utango</span>
+        <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>うたんご</span>
       </header>
 
-      {/* メイン */}
       <main
         style={{
           flex: 1,
@@ -225,6 +325,7 @@ export default function Home() {
           gap: 20,
         }}
       >
+        {/* ─── 初期画面: APIキー・モード・画像アップ ─── */}
         {(state === "idle" || state === "ready") && (
           <>
             <div style={{ textAlign: "center" }}>
@@ -237,105 +338,230 @@ export default function Home() {
               </p>
             </div>
 
-            {/* --- U-01: APIキー入力を常時表示 --- */}
             <ApiKeyInput apiKey={apiKey} onChange={handleApiKeyChange} />
             {!hasApiKey && (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "var(--error, #ef5777)",
-                  margin: "-12px 0 0",
-                  padding: "0 4px",
-                }}
-              >
+              <p style={{ fontSize: 12, color: "var(--error, #ef5777)", margin: "-12px 0 0", padding: "0 4px" }}>
                 ※ 利用するには Gemini API キーの入力が必要です
               </p>
             )}
 
-            {/* モード選択 */}
             <div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={() => setMode("word")}
-                  style={modeButtonStyle(mode === "word")}
-                >
+                <button onClick={() => setMode("word")} style={modeButtonStyle(mode === "word")}>
                   英単語で歌う
                 </button>
-                <button
-                  onClick={() => setMode("sentence")}
-                  style={modeButtonStyle(mode === "sentence")}
-                >
+                <button onClick={() => setMode("sentence")} style={modeButtonStyle(mode === "sentence")}>
                   英文で歌う
                 </button>
               </div>
-              {mode === "sentence" && (
-                <p
-                  style={{
-                    fontSize: 12,
-                    color: "var(--muted-foreground)",
-                    margin: "8px 4px 0",
-                  }}
-                >
-                  英文と日本語訳を交互に。意味ごと覚えられます。
-                </p>
-              )}
             </div>
 
-            <UploadArea
-              previewUrl={previewUrl}
-              onFileSelect={handleFileSelect}
-              onRemoveFile={handleRemoveFile}
-            />
+            <UploadArea previewUrl={previewUrl} onFileSelect={handleFileSelect} onRemoveFile={handleRemoveFile} />
 
-            {/* --- U-01/U-02: キー未入力でdisabled, ツールチップで理由表示 --- */}
             {state === "ready" && (
               <button
-                onClick={handleGenerate}
+                onClick={handleExtract}
                 disabled={!canGenerate}
-                title={!hasApiKey ? "APIキーを入力してください" : ""}
                 style={{
-                  width: "100%",
-                  padding: "16px",
-                  borderRadius: 12,
-                  border: "none",
+                  ...btnPrimary,
                   background: canGenerate ? "var(--primary)" : "var(--muted)",
-                  color: canGenerate
-                    ? "var(--primary-foreground)"
-                    : "var(--muted-foreground)",
-                  fontSize: 17,
-                  fontWeight: 700,
+                  color: canGenerate ? "var(--primary-foreground)" : "var(--muted-foreground)",
                   cursor: canGenerate ? "pointer" : "not-allowed",
                   opacity: canGenerate ? 1 : 0.6,
                 }}
               >
-                🎶 暗記ソングを作る
+                🔍 単語を読み取る
               </button>
             )}
           </>
         )}
 
-        {(state === "processing" || state === "error") && (
-          <ProgressView
-            progress={progress}
-            logs={logs}
-            isProcessing={state === "processing"}
-            errorMessage={errorMessage}
-            onRetry={handleReset}
-          />
+        {/* ─── 読み取り中 ─── */}
+        {state === "extracting" && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🔍</div>
+            <p style={{ fontSize: 16, fontWeight: 600 }}>{statusMessage}</p>
+          </div>
         )}
 
+        {/* ─── 歌詞生成中 ─── */}
+        {state === "generating-lyrics" && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>✍️</div>
+            <p style={{ fontSize: 16, fontWeight: 600 }}>{statusMessage}</p>
+          </div>
+        )}
+
+        {/* ─── 編集画面: 単語選択 + 歌詞編集 ─── */}
+        {state === "editing" && (
+          <>
+            {/* 単語選択 */}
+            <div
+              style={{
+                borderRadius: 16,
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>
+                  📝 読み取った単語（{selectedCount}/{wordPairs.length}）
+                </span>
+                <span style={{ fontSize: 12, color: "var(--muted-foreground)", marginLeft: 8 }}>
+                  歌に入れる単語を選んでください
+                </span>
+              </div>
+              {wordPairs.map((p, i) => (
+                <div
+                  key={i}
+                  onClick={() => togglePair(i)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 16px",
+                    borderBottom: i < wordPairs.length - 1 ? "1px solid var(--border)" : "none",
+                    cursor: "pointer",
+                    opacity: selectedPairs[i] ? 1 : 0.4,
+                    background: selectedPairs[i] ? "transparent" : "var(--muted)",
+                  }}
+                >
+                  <span style={{ fontSize: 18 }}>{selectedPairs[i] ? "☑️" : "⬜"}</span>
+                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{p.word}</span>
+                  <span style={{ fontSize: 14, color: "var(--muted-foreground)" }}>{p.meaning}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* 歌詞表示・編集エリア */}
+            {lyrics && (
+              <div
+                style={{
+                  borderRadius: 16,
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  padding: 16,
+                }}
+              >
+                <div style={{ marginBottom: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700 }}>🎼 歌詞</span>
+                  <span style={{ fontSize: 12, color: "var(--muted-foreground)", marginLeft: 8 }}>
+                    自由に編集できます
+                  </span>
+                </div>
+                <textarea
+                  value={editedLyrics}
+                  onChange={(e) => setEditedLyrics(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 200,
+                    padding: 12,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--background)",
+                    color: "var(--foreground)",
+                    fontSize: 14,
+                    lineHeight: 1.8,
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+            )}
+
+            {/* エラー表示 */}
+            {errorMessage && (
+              <div
+                style={{
+                  background: "rgba(239,87,119,0.1)",
+                  border: "1px solid var(--error, #ef5777)",
+                  borderRadius: 12,
+                  padding: 14,
+                  fontSize: 14,
+                  color: "var(--error, #ef5777)",
+                }}
+              >
+                ⚠️ {errorMessage}
+              </div>
+            )}
+
+            {/* アクションボタン */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {!lyrics ? (
+                <button
+                  onClick={handleGenerateLyrics}
+                  disabled={selectedCount === 0}
+                  style={{
+                    ...btnPrimary,
+                    opacity: selectedCount === 0 ? 0.5 : 1,
+                    cursor: selectedCount === 0 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  ✍️ 歌詞を作る
+                </button>
+              ) : (
+                <>
+                  <button onClick={handleSing} style={btnPrimary}>
+                    🎶 この歌詞で歌を作る
+                  </button>
+                  <button onClick={handleGenerateLyrics} style={btnSecondary}>
+                    🔄 歌詞をもう一回作る
+                  </button>
+                </>
+              )}
+              <button onClick={handleReset} style={{ ...btnSecondary, fontSize: 13, color: "var(--muted-foreground)" }}>
+                ← 最初からやり直す
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ─── 楽曲生成中 ─── */}
+        {state === "singing" && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🎵</div>
+            <p style={{ fontSize: 16, fontWeight: 600 }}>{statusMessage}</p>
+            <p style={{ fontSize: 13, color: "var(--muted-foreground)", marginTop: 8 }}>
+              30秒ほどかかります...
+            </p>
+          </div>
+        )}
+
+        {/* ─── 完成画面 ─── */}
         {state === "done" && jobId && (
           <SongPlayer
             apiUrl={API_URL}
             jobId={jobId}
-            lyrics={lyrics}
-            wordPairs={wordPairs}
+            lyrics={editedLyrics}
+            wordPairs={wordPairs.filter((_, i) => selectedPairs[i])}
             onReset={handleReset}
+            onEditLyrics={handleBackToEdit}
           />
+        )}
+
+        {/* ─── グローバルエラー ─── */}
+        {state === "error" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "20px 0" }}>
+            <div
+              style={{
+                background: "rgba(239,87,119,0.1)",
+                border: "1px solid var(--error, #ef5777)",
+                borderRadius: 12,
+                padding: 14,
+                fontSize: 14,
+                color: "var(--error, #ef5777)",
+              }}
+            >
+              ⚠️ {errorMessage}
+            </div>
+            <button onClick={handleReset} style={btnSecondary}>
+              もう一度ためす
+            </button>
+          </div>
         )}
       </main>
 
-      {/* フッター */}
       <footer
         style={{
           padding: "16px",
@@ -346,8 +572,6 @@ export default function Home() {
         }}
       >
         utango — 英単語が歌になる暗記アプリ
-        <br />
-        アップロードした画像と生成データは一定時間後に自動削除されます。
       </footer>
     </div>
   );

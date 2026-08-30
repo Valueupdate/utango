@@ -1,12 +1,10 @@
 """
 utango バックエンド - エントリーポイント
 
-英単語帳／英文の画像をアップロードすると、
-抽出 → 暗記歌詞生成 → 楽曲生成 を一気通貫で実行し、
-歌詞付きの暗記ソング（MP3）を生成する API サーバー。
-
-【動作確認フェーズ】BYOK（Bring Your Own Key）方式。
-ユーザーが自分の Gemini API キーを入力し、リクエストごとに送信する。
+3段階 API:
+  POST /extract  — 画像から単語を抽出
+  POST /lyrics   — 単語ペアから歌詞を生成（何度でも再生成可能）
+  POST /sing     — 歌詞から楽曲を生成（SSE で進捗配信）
 """
 import os
 import json
@@ -32,7 +30,6 @@ from services.music_service import generate_music
 
 # ─── 定期クリーンアップタスク ─────────────────────────
 async def cleanup_loop():
-    """期限切れジョブを定期的に削除する"""
     while True:
         await asyncio.sleep(JOB_CLEANUP_INTERVAL_SECONDS)
         job_manager.cleanup_expired()
@@ -57,36 +54,17 @@ app.add_middleware(
 )
 
 
-# ─── メインの生成パイプライン ─────────────────────────
-async def run_generation(job: Job, image_path: str, api_key: str, mode: str = "word"):
-    """抽出→歌詞生成→楽曲生成 を実行する"""
+# ─── 楽曲生成パイプライン（SSE用）────────────────────
+async def run_sing(job: Job, lyrics: str, api_key: str):
+    """歌詞→楽曲生成を実行する"""
     try:
-        subject = "英文" if mode == "sentence" else "英単語"
-
-        # 1. 抽出
-        await job.update("extract", 10, f"画像から{subject}を読み取っています...")
-        word_pairs = await extract_word_pairs(image_path, api_key, mode)
-        await job.update(
-            "extract", 35,
-            f"{len(word_pairs)}個の{subject}を読み取りました"
-        )
-
-        # 2. 暗記歌詞生成
-        await job.update("lyrics", 45, "暗記ソングの歌詞を作っています...")
-        display_lyrics, pronunciation_lyrics = await generate_lyrics(
-            word_pairs, api_key, mode
-        )
-        await job.update("lyrics", 60, "歌詞ができました")
-
-        # 3. 楽曲生成
-        await job.update("music", 70, "歌を作っています（少し時間がかかります）...")
+        await job.update("music", 20, "歌を作っています（少し時間がかかります）...")
         output_path = os.path.join(job.work_dir, f"{job.job_id}.mp3")
-        await generate_music(pronunciation_lyrics, output_path, api_key)
+        await generate_music(lyrics, output_path, api_key)
         await job.update("music", 95, "歌が完成しました")
 
-        # 4. 完了
         download_url = f"/download/{job.job_id}"
-        await job.complete(download_url, display_lyrics, word_pairs)
+        await job.complete(download_url, lyrics, [])
 
     except Exception as e:
         import traceback
@@ -95,32 +73,31 @@ async def run_generation(job: Job, image_path: str, api_key: str, mode: str = "w
         await job.fail(str(e))
 
 
-# ─── エンドポイント ───────────────────────────────────
-@app.get("/health")
-async def health():
-    return {
-        "status": "ok",
-        "version": APP_VERSION,
-        "ready": True,
-        "auth_mode": "byok",
-    }
-
-
-@app.post("/generate")
-async def generate(
-    file: UploadFile = File(...),
-    api_key: str = Form(""),
-    mode: str = Form("word"),
-):
-    """英単語／英文ソング生成のメインエンドポイント"""
-
-    # BYOK: ユーザーキーが必須。フォールバックは最終手段。
-    effective_key = api_key.strip() or FALLBACK_GEMINI_API_KEY
-    if not effective_key:
+# ─── ヘルパー: APIキー解決 ────────────────────────────
+def _resolve_api_key(api_key: str) -> str:
+    effective = api_key.strip() or FALLBACK_GEMINI_API_KEY
+    if not effective:
         raise HTTPException(
             status_code=400,
             detail="Gemini API キーを入力してください。",
         )
+    return effective
+
+
+# ─── エンドポイント ───────────────────────────────────
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": APP_VERSION, "ready": True}
+
+
+@app.post("/extract")
+async def extract(
+    file: UploadFile = File(...),
+    api_key: str = Form(""),
+    mode: str = Form("word"),
+):
+    """画像から英単語／英文を抽出する"""
+    effective_key = _resolve_api_key(api_key)
 
     if mode not in ("word", "sentence"):
         mode = "word"
@@ -143,47 +120,85 @@ async def generate(
             detail=f"ファイルサイズが{mb}MBを超えています",
         )
 
-    # ジョブ作成 + 画像保存 + メタデータ保持（SSE接続時に起動するため）
+    # 一時ファイル保存
     job = job_manager.create_job()
     image_path = os.path.join(job.work_dir, f"input{ext}")
     with open(image_path, "wb") as f:
         f.write(content)
 
-    # ジョブにメタデータを保存（/progress 接続時に生成を開始する）
-    job.meta = {
-        "image_path": image_path,
-        "api_key": effective_key,
+    word_pairs = await extract_word_pairs(image_path, effective_key, mode)
+
+    return {
+        "word_pairs": word_pairs,
         "mode": mode,
+    }
+
+
+@app.post("/lyrics")
+async def lyrics_endpoint(
+    api_key: str = Form(""),
+    mode: str = Form("word"),
+    word_pairs_json: str = Form(...),
+):
+    """単語ペアから歌詞を生成する（何度でも呼べる）"""
+    effective_key = _resolve_api_key(api_key)
+
+    if mode not in ("word", "sentence"):
+        mode = "word"
+
+    try:
+        word_pairs = json.loads(word_pairs_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="単語データが不正です")
+
+    if not word_pairs:
+        raise HTTPException(status_code=400, detail="単語が選択されていません")
+
+    display_lyrics, pronunciation_lyrics = await generate_lyrics(
+        word_pairs, effective_key, mode
+    )
+
+    return {
+        "lyrics": display_lyrics,
+    }
+
+
+@app.post("/sing")
+async def sing(
+    api_key: str = Form(""),
+    lyrics: str = Form(...),
+):
+    """歌詞から楽曲を生成する（SSE で進捗配信）"""
+    effective_key = _resolve_api_key(api_key)
+
+    if not lyrics.strip():
+        raise HTTPException(status_code=400, detail="歌詞がありません")
+
+    job = job_manager.create_job()
+    job.meta = {
+        "lyrics": lyrics.strip(),
+        "api_key": effective_key,
     }
 
     return {
         "job_id": job.job_id,
         "status": "accepted",
-        "message": "ソングの生成を受け付けました",
     }
 
 
 @app.get("/progress/{job_id}")
 async def progress(job_id: str):
-    """SSE で進捗を配信する。接続確立と同時に生成パイプラインを起動する。"""
+    """SSE で進捗を配信する"""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="ジョブが見つかりません")
 
     async def event_stream():
-        # --- U-03: SSE ストリーム開始後にパイプラインを起動 ---
-        # これにより、クライアントが確実に読み取り可能な状態で
-        # イベントが流れ始めるため、0% で止まる問題を解消する。
         meta = getattr(job, "meta", None)
         if meta and job.status == "pending":
             job.status = "processing"
             asyncio.create_task(
-                run_generation(
-                    job,
-                    meta["image_path"],
-                    meta["api_key"],
-                    meta["mode"],
-                )
+                run_sing(job, meta["lyrics"], meta["api_key"])
             )
 
         while True:
@@ -205,7 +220,6 @@ async def progress(job_id: str):
 
 @app.get("/download/{job_id}")
 async def download(job_id: str):
-    """生成された楽曲をダウンロードする"""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(
@@ -224,23 +238,6 @@ async def download(job_id: str):
     )
 
 
-@app.get("/result/{job_id}")
-async def result(job_id: str):
-    """歌詞・単語ペア・ダウンロードURLをまとめて返す（再生画面用）"""
-    job = job_manager.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
-    if job.status != "completed":
-        return {"status": job.status, "step": job.step}
-
-    return {
-        "status": "completed",
-        "download_url": job.download_url,
-        "lyrics": job.lyrics,
-        "word_pairs": job.word_pairs,
-    }
-
-
 # ─── フロントエンド静的ファイル配信 ───────────────────
 FRONTEND_OUT = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "out"
 if FRONTEND_OUT.exists():
@@ -249,7 +246,6 @@ if FRONTEND_OUT.exists():
 else:
     print(f"[Main] Frontend not found at: {FRONTEND_OUT}")
 
-# ─── 直接実行時の起動 ─────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8001))
