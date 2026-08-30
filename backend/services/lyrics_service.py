@@ -146,6 +146,7 @@ async def generate_lyrics(
         ひらがな統一のため、両方とも同じ歌詞を返す。
     """
     from google import genai
+    from google.genai import types
 
     if not api_key:
         raise Exception("Gemini API キーが指定されていません")
@@ -160,23 +161,24 @@ async def generate_lyrics(
     )
     prompt = template.replace("{word_list}", word_list)
 
+    parts = [types.Part.from_text(text=prompt)]
+
     max_retries = 3
     retry_delay = 10.0
 
     for attempt in range(max_retries):
         try:
-            # Interactions API: テキストのみの場合は文字列を直接渡す
-            interaction = await asyncio.to_thread(
-                client.interactions.create,
+            response = await asyncio.to_thread(
+                client.models.generate_content,
                 model=GEMINI_MODEL,
-                input=prompt,
-                generation_config={
-                    "thinking_level": "minimal",
-                },
-                store=False,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=1.2,
+                    max_output_tokens=1000,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
             )
-            raw = (interaction.output_text or "").strip()
-
+            raw = (response.text or "").strip()
             if not raw:
                 raise Exception("歌詞を生成できませんでした")
             lyrics = _parse_lyrics_json(raw)

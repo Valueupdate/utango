@@ -55,20 +55,14 @@ app.add_middleware(
 
 
 # ─── 楽曲生成パイプライン（SSE用）────────────────────
-async def run_sing(job: Job, lyrics: str, api_key: str, quality: str = "standard"):
+async def run_sing(job: Job, lyrics: str, api_key: str):
     """歌詞→楽曲生成を実行する"""
     try:
-        if quality == "high":
-            await job.update("music", 20, "🎵 歌を作っています（少し時間がかかります）...")
-        else:
-            await job.update("music", 20, "🗣️ 音声を作っています...")
-
+        await job.update("music", 20, "歌を作っています（少し時間がかかります）...")
         output_path = os.path.join(job.work_dir, f"{job.job_id}.mp3")
-        actual_path = await generate_music(lyrics, output_path, api_key, quality=quality)
-        await job.update("music", 95, "完成しました！")
+        await generate_music(lyrics, output_path, api_key)
+        await job.update("music", 95, "歌が完成しました")
 
-        # TTS の場合 .wav、Lyria の場合 .mp3 になるので実ファイル名を保存
-        job.audio_filename = os.path.basename(actual_path)
         download_url = f"/download/{job.job_id}"
         await job.complete(download_url, lyrics, [])
 
@@ -77,6 +71,7 @@ async def run_sing(job: Job, lyrics: str, api_key: str, quality: str = "standard
         traceback.print_exc()
         print(f"[Main] Job {job.job_id} failed: {e}")
         await job.fail(str(e))
+
 
 # ─── ヘルパー: APIキー解決 ────────────────────────────
 def _resolve_api_key(api_key: str) -> str:
@@ -172,22 +167,17 @@ async def lyrics_endpoint(
 async def sing(
     api_key: str = Form(""),
     lyrics: str = Form(...),
-    quality: str = Form("standard"),
 ):
-    """歌詞から音声を生成する（SSE で進捗配信）"""
+    """歌詞から楽曲を生成する（SSE で進捗配信）"""
     effective_key = _resolve_api_key(api_key)
 
     if not lyrics.strip():
         raise HTTPException(status_code=400, detail="歌詞がありません")
 
-    if quality not in ("standard", "high"):
-        quality = "standard"
-
     job = job_manager.create_job()
     job.meta = {
         "lyrics": lyrics.strip(),
         "api_key": effective_key,
-        "quality": quality,
     }
 
     return {
@@ -208,7 +198,7 @@ async def progress(job_id: str):
         if meta and job.status == "pending":
             job.status = "processing"
             asyncio.create_task(
-                run_sing(job, meta["lyrics"], meta["api_key"], meta.get("quality", "standard"))
+                run_sing(job, meta["lyrics"], meta["api_key"])
             )
 
         while True:
@@ -236,19 +226,17 @@ async def download(job_id: str):
             status_code=404,
             detail="ジョブが見つかりません。有効期限が切れた可能性があります。",
         )
-        
-    # TTS=.wav, Lyria=.mp3
-    audio_filename = getattr(job, "audio_filename", f"{job.job_id}.mp3")
-    audio_path = os.path.join(job.work_dir, audio_filename)
-    if not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail="音声ファイルが見つかりません")
 
-    media_type = "audio/wav" if audio_filename.endswith(".wav") else "audio/mpeg"
+    audio_path = os.path.join(job.work_dir, f"{job.job_id}.mp3")
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="楽曲ファイルが見つかりません")
+
     return FileResponse(
         audio_path,
-        media_type=media_type,
-        filename=f"utango_{job_id}{os.path.splitext(audio_filename)[1]}",
+        media_type="audio/mpeg",
+        filename=f"utango_{job_id}.mp3",
     )
+
 
 # ─── フロントエンド静的ファイル配信 ───────────────────
 FRONTEND_OUT = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "out"

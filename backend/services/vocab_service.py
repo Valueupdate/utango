@@ -8,7 +8,6 @@ docs/design/lyrics-design.md §6 のフォーマットに従う。
 import os
 import json
 import re
-import base64
 import asyncio
 from typing import List, Dict
 
@@ -110,6 +109,7 @@ async def extract_word_pairs(
         最大 MAX_WORDS_PER_SONG 件（超過分は先頭から採用）
     """
     from google import genai
+    from google.genai import types
 
     if not api_key:
         raise Exception("Gemini API キーが指定されていません")
@@ -122,32 +122,27 @@ async def extract_word_pairs(
     with open(image_path, "rb") as f:
         image_bytes = f.read()
 
-    # 公式ドキュメント準拠: Interactions API の inline image 形式
-    # https://ai.google.dev/gemini-api/docs/image-understanding
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    parts = [
+        types.Part.from_text(text=prompt),
+        types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+    ]
 
     max_retries = 5
     retry_delay = 4.0
 
     for attempt in range(max_retries):
         try:
-            interaction = await asyncio.to_thread(
-                client.interactions.create,
+            response = await asyncio.to_thread(
+                client.models.generate_content,
                 model=GEMINI_MODEL,
-                input=[
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image",
-                        "data": image_b64,
-                        "mime_type": mime_type,
-                    },
-                ],
-                generation_config={
-                    "thinking_level": "minimal",
-                },
-                store=False,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=2000,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
             )
-            text = (interaction.output_text or "").strip()
+            text = (response.text or "").strip()
             pairs = _parse_word_pairs(text)
             if not pairs:
                 if mode == "sentence":
