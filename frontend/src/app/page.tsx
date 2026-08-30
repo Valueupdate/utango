@@ -31,6 +31,7 @@ const API_KEY_STORAGE = "utango_gemini_api_key";
 
 export default function Home() {
   const [state, setState] = useState<AppState>("idle");
+  const [quality, setQuality] = useState<"standard" | "high">("standard");
   const [mode, setMode] = useState<Mode>("word");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -155,13 +156,14 @@ export default function Home() {
     if (!editedLyrics.trim()) return;
 
     setState("singing");
-    setStatusMessage("歌を作っています...");
+    setStatusMessage(quality === "high" ? "歌を作っています..." : "音声を作っています...");
     setErrorMessage("");
 
     try {
       const formData = new FormData();
       formData.append("api_key", apiKey.trim());
       formData.append("lyrics", editedLyrics.trim());
+      formData.append("quality", quality);
 
       const res = await fetch(`${API_URL}/sing`, {
         method: "POST",
@@ -488,22 +490,62 @@ export default function Home() {
 
             {/* アクションボタン */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {!lyrics ? (
-                <button
-                  onClick={handleGenerateLyrics}
-                  disabled={selectedCount === 0}
-                  style={{
-                    ...btnPrimary,
-                    opacity: selectedCount === 0 ? 0.5 : 1,
-                    cursor: selectedCount === 0 ? "not-allowed" : "pointer",
-                  }}
-                >
-                  ✍️ 歌詞を作る
-                </button>
-              ) : (
+                {lyrics && (
                 <>
+                  {/* 品質選択 */}
+                  <div
+                    style={{
+                      borderRadius: 16,
+                      background: "var(--card)",
+                      border: "1px solid var(--border)",
+                      padding: 16,
+                    }}
+                  >
+                    <div style={{ marginBottom: 10 }}>
+                      <span style={{ fontSize: 15, fontWeight: 700 }}>🔊 音声モード</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={() => setQuality("standard")}
+                        style={{
+                          flex: 1,
+                          padding: "12px 8px",
+                          borderRadius: 10,
+                          border: quality === "standard" ? "2px solid var(--primary)" : "1px solid var(--border)",
+                          background: quality === "standard" ? "var(--primary)" : "var(--card)",
+                          color: quality === "standard" ? "var(--primary-foreground)" : "var(--foreground)",
+                          fontSize: 14,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        🗣️ 読み上げ
+                        <br />
+                        <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>無料</span>
+                      </button>
+                      <button
+                        onClick={() => setQuality("high")}
+                        style={{
+                          flex: 1,
+                          padding: "12px 8px",
+                          borderRadius: 10,
+                          border: quality === "high" ? "2px solid var(--primary)" : "1px solid var(--border)",
+                          background: quality === "high" ? "var(--primary)" : "var(--card)",
+                          color: quality === "high" ? "var(--primary-foreground)" : "var(--foreground)",
+                          fontSize: 14,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        🎵 歌（Lyria）
+                        <br />
+                        <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>有料キー必要</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <button onClick={handleSing} style={btnPrimary}>
-                    🎶 この歌詞で歌を作る
+                    {quality === "high" ? "🎶 この歌詞で歌を作る" : "🗣️ この歌詞を読み上げる"}
                   </button>
                   <button onClick={handleGenerateLyrics} style={btnSecondary}>
                     🔄 歌詞をもう一回作る
