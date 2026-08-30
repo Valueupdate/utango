@@ -132,17 +132,16 @@ async def extract_word_pairs(
 
     for attempt in range(max_retries):
         try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
+            interaction = await asyncio.to_thread(
+                client.interactions.create,
                 model=GEMINI_MODEL,
-                contents=parts,
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=2000,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
+                input=parts,
+                generation_config={
+                    "thinking_level": "minimal",
+                    "max_output_tokens": 2000,
+                },
             )
-            text = (response.text or "").strip()
+            text = (interaction.output_text or "").strip()
             pairs = _parse_word_pairs(text)
             if not pairs:
                 if mode == "sentence":

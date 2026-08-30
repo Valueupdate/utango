@@ -168,17 +168,17 @@ async def generate_lyrics(
 
     for attempt in range(max_retries):
         try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
+            interaction = await asyncio.to_thread(
+                client.interactions.create,
                 model=GEMINI_MODEL,
-                contents=parts,
-                config=types.GenerateContentConfig(
-                    temperature=1.2,
-                    max_output_tokens=1000,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
+                input=parts,
+                generation_config={
+                    "thinking_level": "minimal",
+                    "max_output_tokens": 1000,
+                },
             )
-            raw = (response.text or "").strip()
+            raw = (interaction.output_text or "").strip()
+
             if not raw:
                 raise Exception("歌詞を生成できませんでした")
             lyrics = _parse_lyrics_json(raw)

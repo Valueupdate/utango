@@ -50,7 +50,7 @@ FALLBACK_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ─── AI モデル設定 ───────────────────────────────────
 # 画像解析・歌詞生成に使う Gemini モデル
-GEMINI_MODEL = "models/gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
 # 楽曲生成に使う Lyria 3 モデル（preview のため変更の可能性あり）
 # LYRIA_MODEL = "lyria-3-pro-preview"
 LYRIA_MODEL = "lyria-3-clip-preview"
@@ -67,7 +67,7 @@ MUSIC_STYLE_PROMPT = (
 )
 
 # ─── TTS（読み上げ）設定 ─────────────────────────────
-TTS_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_MODEL = "gemini-3.1-flash-tts-preview"
 TTS_VOICE = "Kore"    # 日本語対応の明るい声
 
 # TTS 用の読み上げプロンプト（歌詞の前に付加される）
