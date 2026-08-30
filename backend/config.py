@@ -66,6 +66,10 @@ MUSIC_STYLE_PROMPT = (
     "英語パートは正しい英語の発音で歌うこと。"
 )
 
+# ─── TTS（読み上げ）設定 ─────────────────────────────
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_VOICE = "Kore"    # 日本語対応の明るい声
+
 # TTS 用の読み上げプロンプト（歌詞の前に付加される）
 TTS_STYLE_PROMPT = (
     "あなたはテレビCMのナレーターです。"
