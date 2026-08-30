@@ -77,11 +77,13 @@ export default function Home() {
     setState("idle");
   }, []);
 
-  const handleGenerate = useCallback(async () => {
-    if (!file) return;
+  // --- U-01: APIキーが入力済みかどうか ---
+  const hasApiKey = apiKey.trim().length > 0;
+  // ボタンを有効にする条件: ファイル選択済み＋APIキー入力済み
+  const canGenerate = state === "ready" && hasApiKey;
 
-    // 共有キー方式: apiKey が空でもサーバー側のフォールバックキーで処理するため、
-    // ここでの必須ガードは行わない。キーがある人だけ自分のキーが優先される。
+  const handleGenerate = useCallback(async () => {
+    if (!file || !apiKey.trim()) return;
 
     setState("processing");
     setProgress(0);
@@ -92,11 +94,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("mode", mode);
-      // 入力がある場合のみユーザーのキーを送信。空ならサーバーのフォールバックに任せる。
-      const trimmedKey = apiKey.trim();
-      if (trimmedKey) {
-        formData.append("api_key", trimmedKey);
-      }
+      formData.append("api_key", apiKey.trim());
 
       const res = await fetch(`${API_URL}/generate`, {
         method: "POST",
@@ -239,6 +237,21 @@ export default function Home() {
               </p>
             </div>
 
+            {/* --- U-01: APIキー入力を常時表示 --- */}
+            <ApiKeyInput apiKey={apiKey} onChange={handleApiKeyChange} />
+            {!hasApiKey && (
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--error, #ef5777)",
+                  margin: "-12px 0 0",
+                  padding: "0 4px",
+                }}
+              >
+                ※ 利用するには Gemini API キーの入力が必要です
+              </p>
+            )}
+
             {/* モード選択 */}
             <div>
               <div style={{ display: "flex", gap: 8 }}>
@@ -274,50 +287,30 @@ export default function Home() {
               onRemoveFile={handleRemoveFile}
             />
 
+            {/* --- U-01/U-02: キー未入力でdisabled, ツールチップで理由表示 --- */}
             {state === "ready" && (
               <button
                 onClick={handleGenerate}
+                disabled={!canGenerate}
+                title={!hasApiKey ? "APIキーを入力してください" : ""}
                 style={{
                   width: "100%",
                   padding: "16px",
                   borderRadius: 12,
                   border: "none",
-                  background: "var(--primary)",
-                  color: "var(--primary-foreground)",
+                  background: canGenerate ? "var(--primary)" : "var(--muted)",
+                  color: canGenerate
+                    ? "var(--primary-foreground)"
+                    : "var(--muted-foreground)",
                   fontSize: 17,
                   fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: canGenerate ? "pointer" : "not-allowed",
+                  opacity: canGenerate ? 1 : 0.6,
                 }}
               >
                 🎶 暗記ソングを作る
               </button>
             )}
-
-            {/* 詳細設定: 自分の Gemini API キーを使いたい人だけ開く */}
-            <details style={{ fontSize: 13 }}>
-              <summary
-                style={{
-                  cursor: "pointer",
-                  color: "var(--muted-foreground)",
-                  padding: "8px 0",
-                  userSelect: "none",
-                }}
-              >
-                詳細設定（自分の API キーを使う場合）
-              </summary>
-              <div style={{ marginTop: 12 }}>
-                <p
-                  style={{
-                    fontSize: 12,
-                    color: "var(--muted-foreground)",
-                    margin: "0 0 8px",
-                  }}
-                >
-                  通常は入力不要です。自分の Gemini API キーで利用したい場合のみ入力してください。
-                </p>
-                <ApiKeyInput apiKey={apiKey} onChange={handleApiKeyChange} />
-              </div>
-            </details>
           </>
         )}
 

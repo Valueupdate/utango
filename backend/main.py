@@ -5,8 +5,8 @@ utango バックエンド - エントリーポイント
 抽出 → 暗記歌詞生成 → 楽曲生成 を一気通貫で実行し、
 歌詞付きの暗記ソング（MP3）を生成する API サーバー。
 
-【動作確認フェーズ】共有キー方式（サーバーのフォールバックキー）＋
-BYOK（Bring Your Own Key）併用。キーが送られなければサーバーキーを使う。
+【動作確認フェーズ】BYOK（Bring Your Own Key）方式。
+ユーザーが自分の Gemini API キーを入力し、リクエストごとに送信する。
 """
 import os
 import json
@@ -14,7 +14,7 @@ import asyncio
 import pathlib
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -59,9 +59,8 @@ app.add_middleware(
 
 # ─── メインの生成パイプライン ─────────────────────────
 async def run_generation(job: Job, image_path: str, api_key: str, mode: str = "word"):
-    """バックグラウンドで 抽出→歌詞生成→楽曲生成 を実行する"""
+    """抽出→歌詞生成→楽曲生成 を実行する"""
     try:
-        # モードに応じた表示文言
         subject = "英文" if mode == "sentence" else "英単語"
 
         # 1. 抽出
@@ -72,20 +71,20 @@ async def run_generation(job: Job, image_path: str, api_key: str, mode: str = "w
             f"{len(word_pairs)}個の{subject}を読み取りました"
         )
 
-        # 2. 暗記歌詞生成（表示用=漢字あり / 発音用=ひらがな の2種類）
+        # 2. 暗記歌詞生成
         await job.update("lyrics", 45, "暗記ソングの歌詞を作っています...")
         display_lyrics, pronunciation_lyrics = await generate_lyrics(
             word_pairs, api_key, mode
         )
         await job.update("lyrics", 60, "歌詞ができました")
 
-        # 3. 楽曲生成（発音用=ひらがな歌詞を渡して正しい日本語発音にする）
+        # 3. 楽曲生成
         await job.update("music", 70, "歌を作っています（少し時間がかかります）...")
         output_path = os.path.join(job.work_dir, f"{job.job_id}.mp3")
         await generate_music(pronunciation_lyrics, output_path, api_key)
         await job.update("music", 95, "歌が完成しました")
 
-        # 4. 完了（画面には表示用=漢字ありの歌詞を渡す）
+        # 4. 完了
         download_url = f"/download/{job.job_id}"
         await job.complete(download_url, display_lyrics, word_pairs)
 
@@ -103,20 +102,19 @@ async def health():
         "status": "ok",
         "version": APP_VERSION,
         "ready": True,
-        "auth_mode": "shared+byok",
+        "auth_mode": "byok",
     }
 
 
 @app.post("/generate")
 async def generate(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     api_key: str = Form(""),
     mode: str = Form("word"),
 ):
     """英単語／英文ソング生成のメインエンドポイント"""
 
-    # 共有キー: ユーザーのキーがあればそれを使い、無ければサーバーのフォールバックキー。
+    # BYOK: ユーザーキーが必須。フォールバックは最終手段。
     effective_key = api_key.strip() or FALLBACK_GEMINI_API_KEY
     if not effective_key:
         raise HTTPException(
@@ -124,11 +122,9 @@ async def generate(
             detail="Gemini API キーを入力してください。",
         )
 
-    # モードの正規化（未知の値は word 扱い）
     if mode not in ("word", "sentence"):
         mode = "word"
 
-    # 拡張子バリデーション
     if not file.filename:
         raise HTTPException(status_code=400, detail="ファイルが選択されていません")
     ext = os.path.splitext(file.filename)[1].lower()
@@ -139,7 +135,6 @@ async def generate(
             detail=f"対応している画像形式は {allowed} です",
         )
 
-    # サイズチェック
     content = await file.read()
     if len(content) > MAX_IMAGE_SIZE_BYTES:
         mb = MAX_IMAGE_SIZE_BYTES // (1024 * 1024)
@@ -148,30 +143,49 @@ async def generate(
             detail=f"ファイルサイズが{mb}MBを超えています",
         )
 
-    # ジョブ作成 + 画像保存
+    # ジョブ作成 + 画像保存 + メタデータ保持（SSE接続時に起動するため）
     job = job_manager.create_job()
     image_path = os.path.join(job.work_dir, f"input{ext}")
     with open(image_path, "wb") as f:
         f.write(content)
 
-    # バックグラウンドで処理開始
-    background_tasks.add_task(run_generation, job, image_path, effective_key, mode)
+    # ジョブにメタデータを保存（/progress 接続時に生成を開始する）
+    job.meta = {
+        "image_path": image_path,
+        "api_key": effective_key,
+        "mode": mode,
+    }
 
     return {
         "job_id": job.job_id,
-        "status": "processing",
-        "message": "ソングの生成を開始しました",
+        "status": "accepted",
+        "message": "ソングの生成を受け付けました",
     }
 
 
 @app.get("/progress/{job_id}")
 async def progress(job_id: str):
-    """SSEで進捗を配信する"""
+    """SSE で進捗を配信する。接続確立と同時に生成パイプラインを起動する。"""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="ジョブが見つかりません")
 
     async def event_stream():
+        # --- U-03: SSE ストリーム開始後にパイプラインを起動 ---
+        # これにより、クライアントが確実に読み取り可能な状態で
+        # イベントが流れ始めるため、0% で止まる問題を解消する。
+        meta = getattr(job, "meta", None)
+        if meta and job.status == "pending":
+            job.status = "processing"
+            asyncio.create_task(
+                run_generation(
+                    job,
+                    meta["image_path"],
+                    meta["api_key"],
+                    meta["mode"],
+                )
+            )
+
         while True:
             try:
                 event = await asyncio.wait_for(job.queue.get(), timeout=30.0)
@@ -228,7 +242,6 @@ async def result(job_id: str):
 
 
 # ─── フロントエンド静的ファイル配信 ───────────────────
-# APIエンドポイントより後にマウントすることで API が優先される
 FRONTEND_OUT = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "out"
 if FRONTEND_OUT.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_OUT), html=True), name="frontend")

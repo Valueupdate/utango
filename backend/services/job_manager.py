@@ -18,7 +18,7 @@ class Job:
 
     def __init__(self, job_id: str):
         self.job_id = job_id
-        self.status = "processing"
+        self.status = "pending"          # ← "processing" から "pending" に変更
         self.progress = 0
         self.step = "queued"
         self.message = "ジョブを開始しています..."
@@ -28,6 +28,7 @@ class Job:
         self.error: Optional[str] = None
         self.created_at = time.time()
         self.queue: asyncio.Queue = asyncio.Queue()
+        self.meta: Optional[Dict[str, Any]] = None  # ← 追加: 生成パラメータ保持用
 
         # ジョブ専用の一時ディレクトリ
         self.work_dir = os.path.join(TEMP_DIR, job_id)
