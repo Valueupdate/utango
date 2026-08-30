@@ -50,7 +50,7 @@ FALLBACK_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ─── AI モデル設定 ───────────────────────────────────
 # 画像解析・歌詞生成に使う Gemini モデル
-GEMINI_MODEL = "models/gemini-2.5-flash"
+GEMINI_MODEL = "models/gemini-3.6-flash"
 # 楽曲生成に使う Lyria 3 モデル（preview のため変更の可能性あり）
 # LYRIA_MODEL = "lyria-3-pro-preview"
 LYRIA_MODEL = "lyria-3-clip-preview"
