@@ -236,3 +236,9 @@ if FRONTEND_OUT.exists():
 else:
     print(f"[Main] Frontend not found at: {FRONTEND_OUT}")
 
+# ─── 直接実行時の起動 ─────────────────────────────────
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8001))
+    print(f"[Main] Starting utango on port {port}")
+    uvicorn.run(app, host="127.0.0.1", port=port)
