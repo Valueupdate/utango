@@ -52,13 +52,16 @@ FALLBACK_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # 画像解析・歌詞生成に使う Gemini モデル
 GEMINI_MODEL = "models/gemini-2.5-flash"
 # 楽曲生成に使う Lyria 3 モデル（preview のため変更の可能性あり）
-LYRIA_MODEL = "lyria-3-pro-preview"
+# LYRIA_MODEL = "lyria-3-pro-preview"
+LYRIA_MODEL = "lyria-3-clip-preview"
 
 # ─── 歌詞・楽曲設定 ──────────────────────────────────
 # 1曲あたりの単語数上限（docs/design/lyrics-design.md §3 参照）
-MAX_WORDS_PER_SONG = 10
+MAX_WORDS_PER_SONG = 5
 # 楽曲生成プロンプトに前置する楽曲指示
 MUSIC_STYLE_PROMPT = (
-    "A bright, upbeat pop song for memorizing English vocabulary. "
-    "Medium tempo, clear pronunciation, cheerful mood."
+    "日本語と英語がまざったキャッチーなCMジングル。"
+    "テレビCMのように耳に残る、明るくテンポの良い30秒の曲。"
+    "日本語パートははっきりした発音で元気に歌い、"
+    "英語パートは正しい英語の発音で歌うこと。"
 )
