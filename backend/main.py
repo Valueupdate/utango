@@ -55,13 +55,17 @@ app.add_middleware(
 
 
 # ─── 楽曲生成パイプライン（SSE用）────────────────────
-async def run_sing(job: Job, lyrics: str, api_key: str):
+async def run_sing(job: Job, lyrics: str, api_key: str, quality: str = "standard"):
     """歌詞→楽曲生成を実行する"""
     try:
-        await job.update("music", 20, "歌を作っています（少し時間がかかります）...")
+        if quality == "high":
+            await job.update("music", 20, "🎵 歌を作っています（少し時間がかかります）...")
+        else:
+            await job.update("music", 20, "🗣️ 音声を作っています...")
+
         output_path = os.path.join(job.work_dir, f"{job.job_id}.mp3")
-        await generate_music(lyrics, output_path, api_key)
-        await job.update("music", 95, "歌が完成しました")
+        actual_path = await generate_music(lyrics, output_path, api_key, quality=quality)
+        await job.update("music", 95, "完成しました！")
 
         # TTS の場合 .wav、Lyria の場合 .mp3 になるので実ファイル名を保存
         job.audio_filename = os.path.basename(actual_path)
@@ -73,7 +77,6 @@ async def run_sing(job: Job, lyrics: str, api_key: str):
         traceback.print_exc()
         print(f"[Main] Job {job.job_id} failed: {e}")
         await job.fail(str(e))
-
 
 # ─── ヘルパー: APIキー解決 ────────────────────────────
 def _resolve_api_key(api_key: str) -> str:

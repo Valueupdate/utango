@@ -95,10 +95,10 @@ async def generate_music_lyria(lyrics: str, output_path: str, api_key: str) -> s
                 raise
             raise Exception(f"楽曲生成エラー: {err_str}")
 
-
 async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str:
     """Gemini TTS で歌詞を読み上げる（無料）"""
     from google import genai
+    from google.genai import types
 
     if not api_key:
         raise Exception("Gemini API キーが指定されていません")
@@ -113,28 +113,41 @@ async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str
 
     for attempt in range(max_retries):
         try:
-            interaction = await asyncio.to_thread(
-                client.interactions.create,
+            response = await asyncio.to_thread(
+                client.models.generate_content,
                 model=TTS_MODEL,
-                input=prompt,
-                response_format={"type": "audio"},
-                generation_config={
-                    "speech_config": [
-                        {"voice": TTS_VOICE}
-                    ]
-                },
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=TTS_VOICE,
+                            )
+                        )
+                    ),
+                ),
             )
 
-            if not interaction.output_audio or not interaction.output_audio.data:
-                raise Exception("音声データが返されませんでした")
+            # レスポンスから音声データを取り出す
+            audio_data = None
+            mime_type = None
+            if response.candidates and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if getattr(part, "inline_data", None) is not None:
+                        audio_data = part.inline_data.data
+                        mime_type = getattr(part.inline_data, "mime_type", "")
+                        break
 
-            pcm_data = base64.b64decode(interaction.output_audio.data)
+            if audio_data is None:
+                raise Exception("音声データが返されませんでした")
 
             # WAV として保存
             wav_path = output_path.replace(".mp3", ".wav")
-            _save_wave(wav_path, pcm_data)
+            with open(wav_path, "wb") as f:
+                f.write(audio_data)
 
-            print(f"[MusicService] TTS generated: {wav_path}")
+            print(f"[MusicService] TTS generated: {wav_path} (mime: {mime_type})")
             return wav_path
 
         except Exception as e:
@@ -152,6 +165,7 @@ async def generate_music_tts(lyrics: str, output_path: str, api_key: str) -> str
             if "返されませんでした" in err_str:
                 raise
             raise Exception(f"TTS生成エラー: {err_str}")
+
 
 
 async def generate_music(lyrics: str, output_path: str, api_key: str,
