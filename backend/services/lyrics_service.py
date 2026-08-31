@@ -16,42 +16,49 @@ from config import GEMINI_MODEL
 
 
 # ─── 英単語モード用プロンプト ─────────────────────────
-LYRICS_PROMPT_TEMPLATE = """あなたは最高に笑えるダジャレCMソングの作詞家です。
-以下の英単語と和訳のペアを、20〜30秒で歌い切れるバカバカしい暗記ソングにしてください。
+LYRICS_PROMPT_TEMPLATE = """あなたは日本の暗記ソングの作詞家です。
+英単語の音を「実在する日本語のことば」に置きかえた語呂合わせで、
+20〜30秒で歌い切れる、くすっと笑える暗記ソングを作ってください。
 
 単語ペア:
 {word_list}
 
-【最優先の絶対ルール（これを破ったら失格）】
-- 単語ごとに「英単語」と「その和訳」の両方を歌詞に入れる。
-  和訳が歌詞に出てこない単語が1つでもあったら失格。
-- 和訳は上に書いた「」の中の意味をそのまま使う。
-  勝手に別の意味の言葉に言い換えない（例:「けいけんな」を「まじめな」にするのは失格）。
-- 漢字は使えないので、和訳はひらがな・カタカナに直して書く。
-  意味は変えず、読みだけ変える（例: 敬虔な→けいけんな、最適の→さいてきの）。
-- 英単語だけを並べた行（例「desk! chair! desk! chair!」）は全体で1行まで。
-- 全体で {min_lines}〜{max_lines} 行。
+【最優先の絶対ルール（破ったら失格）】
+- 単語ごとに「英単語」「語呂合わせの日本語」「和訳」の3つを同じ行に入れる
+- 語呂合わせは、実在する日本語のことば・フレーズにする。
+  意味のない音のならび（例: おぷてぃむむ、いんちきめいと、でぶうっとり）は失格
+- 英単語をカタカナに読みかえただけのものは語呂合わせではない。失格
+- 各行は、日本語の文として通じること。景色が目に浮かぶ一文にする
+- 和訳は上の「」の意味をそのまま使う。別の意味に言いかえたら失格
+- 漢字は使えないので、和訳はひらがなに直して書く（意味は変えず読みだけ変える）
+- 全体で {min_lines}〜{max_lines} 行
 
-【作り方のコツ】
-- 英単語の「音」を日本語のダジャレにこじつけ、そのダジャレの近くに和訳を置く
-- 2〜3個の単語を1つのバカバカしいストーリーにまぜこむと最高
-- 「おぼえよう」「レッツラーン」のような教育的フレーズは禁止
-- [Intro] [Outro] は不要。セクションタグは [Verse] のみ、1セクションだけ
-- くだらなければくだらないほどよい
+【日本的にする】
+- 題材は日本の暮らし。おふろ、こたつ、おまいり、おべんとう、えんがわ、
+  さんぽ、たなばた、おばあちゃん、こうえん、でんしゃ、たいやき など
+- ブラックジョーク、下品なネタ、皮肉は禁止。ほのぼのした笑いにする
+- 人の見た目や体型をからかうことば（でぶ、はげ など）は絶対に使わない
+- 「おぼえよう」「おぼえろ」「レッツラーン」などの教育的フレーズは禁止
+- [Intro] [Outro] は不要。セクションタグは [Verse] のみ、1セクション
 
 【良い歌詞の例】
-単語が devout（敬虔な）, optimum（最適の）, placid（穏やかな）の場合:
+単語が devout（敬虔な）, placid（穏やかな）, assiduous（勤勉な）の場合:
 [Verse]
-devout な おれは でぶ！と いわれても けいけんな こころ
-optimum は おぷちゃん さいてきの ポジション さがして ごろごろ
-placid な かのじょは プラシド おだやかな かおで にらんでる
-けいけんに さいてきに おだやかに！ devout! optimum! placid!
+devout は でっかい ぼうさん けいけんな かおで おまいり
+placid は プラスチックの おけ おだやかな おふろの ゆげ
+assiduous は あしを どうする？ きんべんな ありが ぎょうれつ
+でっかい ぼうさんも ありんこも きょうも まじめに あるいてる
+devout! placid! assiduous!
+
+（ポイント: でっかいぼうさん・プラスチックのおけ・あしをどうする は
+ どれも日本語として意味が通じることば。音だけの断片にしていない）
 
 【失格の例】
-- 「devout! optimum! placid!」だけで 和訳（けいけんな・さいてきの・おだやかな）が
-  どこにも出てこない歌詞
+- 「optimum！ おぷてぃむむ！」…英単語をカタカナにしただけ
+- 「devout！ でぶ うっとり」…意味のない断片、しかも見た目をからかっている
+- 「intimate！ いんちき めいと」…日本語として意味が通じない
+- 和訳（けいけんな など）が歌詞のどこにも出てこない
 - 「○○ は △△ という いみです」のような説明くさい歌詞
-- おしゃれ・きれい・さわやかな歌詞
 
 【表記ルール】
 - にほんごは ぜんぶ ひらがな・カタカナ（かんじ きんし）
@@ -62,11 +69,18 @@ placid な かのじょは プラシド おだやかな かおで にらんで�
 {
   "lyrics": "（歌詞）",
   "used": [
-    {"word": "（英単語）", "kana": "（歌詞の中で実際に使った和訳のかな表記）"}
+    {
+      "word": "（英単語）",
+      "goro": "（語呂合わせに使った日本語のことば）",
+      "goro_imi": "（その日本語が何を指すかの説明）",
+      "kana": "（歌詞の中で使った和訳のかな表記）"
+    }
   ]
 }
 "used" には渡された単語すべてを必ず書く。
+"goro_imi" が書けないような音のならびは語呂合わせとして失格なので、作り直すこと。
 """
+
 
 # ─── 英文モード用プロンプト ───────────────────────────
 LYRICS_PROMPT_TEMPLATE_SENTENCE = """あなたは下品で最高に笑えるダジャレCMソングの作詞家です。
@@ -146,6 +160,28 @@ def _find_missing(
             })
     return missing
 
+_BANNED_WORDS = [
+    "でぶ", "デブ", "はげ", "ハゲ", "ちび", "ブス", "きちがい",
+    "おぼえよう", "おぼえろ", "おぼえたかな", "レッツラーン", "べんきょうしよう",
+]
+
+
+def _find_banned(lyrics: str) -> List[str]:
+    return [w for w in _BANNED_WORDS if w in lyrics]
+
+
+def _find_weak_goro(used: List[Dict[str, str]]) -> List[str]:
+    """語呂の説明を書けていない＝音の羅列になっている語を返す"""
+    weak = []
+    for u in used:
+        if not isinstance(u, dict):
+            continue
+        goro = str(u.get("goro") or "").strip()
+        imi = str(u.get("goro_imi") or "").strip()
+        if not goro or not imi or len(imi) < 4:
+            weak.append(str(u.get("word") or "").strip())
+    return [w for w in weak if w]
+
 
 def _parse_lyrics_json(response_text: str) -> Tuple[str, List[Dict[str, str]]]:
     text = response_text.strip()
@@ -206,9 +242,9 @@ async def generate_lyrics(
                     model=GEMINI_MODEL,
                     contents=parts,
                     config=types.GenerateContentConfig(
-                        temperature=1.0,
-                        max_output_tokens=1600,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        temperature=0.9,
+                        max_output_tokens=2400,
+                        thinking_config=types.ThinkingConfig(thinking_budget=1024),
                     ),
                 )
                 raw = (response.text or "").strip()
@@ -230,25 +266,41 @@ async def generate_lyrics(
 
     lyrics, used = await _call(base_prompt)
     missing = _find_missing(lyrics, word_pairs, used)
+    banned = _find_banned(lyrics)
+    weak = _find_weak_goro(used)
 
-    # 和訳が落ちた語があれば、指摘して1回だけ書き直させる
-    if missing:
-        detail = "\n".join(
-            f"- {m['word']}（和訳「{m['meaning']}」）: {m['reason']}" for m in missing
-        )
+    if missing or banned or weak:
+        problems = []
+        if missing:
+            problems += [
+                f"- {m['word']}（和訳「{m['meaning']}」）: {m['reason']}" for m in missing
+            ]
+        if banned:
+            problems.append(
+                f"- 使ってはいけないことばが入っている: {'・'.join(banned)}"
+            )
+        if weak:
+            problems.append(
+                f"- 語呂合わせが日本語として意味をなしていない: {'・'.join(weak)}"
+            )
         fix_prompt = (
             f"{base_prompt}\n\n"
             "【やり直しの指示】\n"
-            "さきほど作った歌詞は次の単語で失格でした:\n"
-            f"{detail}\n"
-            "これらの単語について、英単語とその和訳（ひらがな）が"
-            "必ず歌詞に出てくるように全文を作り直してください。\n"
+            "さきほど作った歌詞は次の点で失格でした:\n"
+            + "\n".join(problems)
+            + "\n実在する日本語のことばを使った語呂合わせに直し、"
+            "英単語と和訳の両方が出てくるように全文を作り直してください。\n"
             f"さきほどの歌詞:\n{lyrics}\n"
         )
         try:
-            retry_lyrics, retry_used = await _call(fix_prompt)
-            if len(_find_missing(retry_lyrics, word_pairs, retry_used)) < len(missing):
-                lyrics, used = retry_lyrics, retry_used
+            r_lyrics, r_used = await _call(fix_prompt)
+            r_score = (
+                len(_find_missing(r_lyrics, word_pairs, r_used))
+                + len(_find_banned(r_lyrics))
+                + len(_find_weak_goro(r_used))
+            )
+            if r_score < len(missing) + len(banned) + len(weak):
+                lyrics, used = r_lyrics, r_used
                 missing = _find_missing(lyrics, word_pairs, used)
         except Exception:
             pass
