@@ -33,7 +33,7 @@ echo GitHub push 完了！
 :: 3. VPS にデプロイ
 echo.
 echo [3/3] ConoHa VPS にデプロイ...
-ssh root@133.88.121.90 "cd /opt/utango && git pull origin main && cd frontend && npm install && npm run build && cd ../backend && source venv/bin/activate && pip install -r requirements.txt && sudo systemctl restart utango"
+ssh root@133.88.121.90 "cd /opt/utango && git pull origin main && cd frontend && npm install && rm -rf .next out && npm run build && cd ../backend && ./venv/bin/pip install -r requirements.txt && sudo systemctl restart utango && sudo systemctl reload nginx"
 if errorlevel 1 (
     echo [エラー] VPS デプロイに失敗しました。
     pause

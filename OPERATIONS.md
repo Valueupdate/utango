@@ -120,7 +120,22 @@ Copyserver {
     }
 
     # バックエンド API（ポート 8001）
-    location /generate {
+    # ⚠️ 3段階API（/extract → /lyrics → /sing）すべてを列挙すること。
+    #    漏れると静的ルートに吸われて 404 になり、画面が進まなくなる。
+    location /extract {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 25m;      # 画像アップロード（上限20MB）に対応
+        proxy_read_timeout 300s;       # Gemini Vision の応答待ち
+    }
+    location /lyrics {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+    }
+    location /sing {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -129,6 +144,7 @@ Copyserver {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_buffering off;           # SSE のためバッファリング無効
+        proxy_cache off;
         proxy_read_timeout 3600s;      # 楽曲生成の待ち時間に耐える
     }
     location /download/ {
@@ -141,6 +157,7 @@ Copyserver {
         proxy_pass http://127.0.0.1:8001;
     }
 }
+>>>
 Copy
 ⚠️ この Nginx 設定は雛形です。実際は Slide2Video で稼働中の設定を複製し、 ドメイン名（utango.valueupdate.net）とポート（8001）を書き換えて作るのが確実。 /progress/ の SSE は proxy_buffering off と長めの proxy_read_timeout が必須。
 
