@@ -15,6 +15,7 @@ export type AppState =
   | "done"
   | "error";
 export type Mode = "word" | "sentence";
+export type Quality = "standard" | "high";
 
 export interface WordPair {
   word: string;
@@ -28,10 +29,12 @@ export interface LogEntry {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 const API_KEY_STORAGE = "utango_gemini_api_key";
+// ビルド識別子。画面に表示され、古いビルドを見ていないか判別するために使う
+const APP_BUILD = "2026-08-31b";
 
 export default function Home() {
   const [state, setState] = useState<AppState>("idle");
-  const [quality, setQuality] = useState<"standard" | "high">("standard");
+  const [quality, setQuality] = useState<Quality>("standard");
   const [mode, setMode] = useState<Mode>("word");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -228,7 +231,7 @@ export default function Home() {
       setErrorMessage(message);
       setState("editing");
     }
-  }, [editedLyrics, apiKey]);
+  }, [editedLyrics, apiKey, quality]);
 
   // ─── リセット ───────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -261,6 +264,7 @@ export default function Home() {
   };
 
   const selectedCount = selectedPairs.filter(Boolean).length;
+  const hasLyrics = lyrics.trim().length > 0;
 
   const modeButtonStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
@@ -270,6 +274,18 @@ export default function Home() {
     background: active ? "var(--primary)" : "var(--card)",
     color: active ? "var(--primary-foreground)" : "var(--foreground)",
     fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+  });
+
+  const qualityButtonStyle = (active: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: "12px 8px",
+    borderRadius: 10,
+    border: active ? "2px solid var(--primary)" : "1px solid var(--border)",
+    background: active ? "var(--primary)" : "var(--card)",
+    color: active ? "var(--primary-foreground)" : "var(--foreground)",
+    fontSize: 14,
     fontWeight: 700,
     cursor: "pointer",
   });
@@ -437,7 +453,7 @@ export default function Home() {
             </div>
 
             {/* 歌詞表示・編集エリア */}
-            {lyrics && (
+            {hasLyrics && (
               <div
                 style={{
                   borderRadius: 16,
@@ -472,6 +488,40 @@ export default function Home() {
               </div>
             )}
 
+            {/* 音声モード選択（歌詞ができてから表示） */}
+            {hasLyrics && (
+              <div
+                style={{
+                  borderRadius: 16,
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  padding: 16,
+                }}
+              >
+                <div style={{ marginBottom: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700 }}>🔊 音声モード</span>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => setQuality("standard")}
+                    style={qualityButtonStyle(quality === "standard")}
+                  >
+                    🗣️ 読み上げ
+                    <br />
+                    <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>無料</span>
+                  </button>
+                  <button
+                    onClick={() => setQuality("high")}
+                    style={qualityButtonStyle(quality === "high")}
+                  >
+                    🎵 歌（Lyria）
+                    <br />
+                    <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>有料キー必要</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* エラー表示 */}
             {errorMessage && (
               <div
@@ -488,70 +538,26 @@ export default function Home() {
               </div>
             )}
 
-            {/* アクションボタン */}
+            {/* アクションボタン
+                歌詞生成ボタンは条件分岐の外に置き、どの状態でも必ず表示する。
+                これにより「次に進むボタンが消えて操作不能になる」事故を防ぐ。 */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {lyrics && (
-                <>
-                  {/* 品質選択 */}
-                  <div
-                    style={{
-                      borderRadius: 16,
-                      background: "var(--card)",
-                      border: "1px solid var(--border)",
-                      padding: 16,
-                    }}
-                  >
-                    <div style={{ marginBottom: 10 }}>
-                      <span style={{ fontSize: 15, fontWeight: 700 }}>🔊 音声モード</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => setQuality("standard")}
-                        style={{
-                          flex: 1,
-                          padding: "12px 8px",
-                          borderRadius: 10,
-                          border: quality === "standard" ? "2px solid var(--primary)" : "1px solid var(--border)",
-                          background: quality === "standard" ? "var(--primary)" : "var(--card)",
-                          color: quality === "standard" ? "var(--primary-foreground)" : "var(--foreground)",
-                          fontSize: 14,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        🗣️ 読み上げ
-                        <br />
-                        <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>無料</span>
-                      </button>
-                      <button
-                        onClick={() => setQuality("high")}
-                        style={{
-                          flex: 1,
-                          padding: "12px 8px",
-                          borderRadius: 10,
-                          border: quality === "high" ? "2px solid var(--primary)" : "1px solid var(--border)",
-                          background: quality === "high" ? "var(--primary)" : "var(--card)",
-                          color: quality === "high" ? "var(--primary-foreground)" : "var(--foreground)",
-                          fontSize: 14,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        🎵 歌（Lyria）
-                        <br />
-                        <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>有料キー必要</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <button onClick={handleSing} style={btnPrimary}>
-                    {quality === "high" ? "🎶 この歌詞で歌を作る" : "🗣️ この歌詞を読み上げる"}
-                  </button>
-                  <button onClick={handleGenerateLyrics} style={btnSecondary}>
-                    🔄 歌詞をもう一回作る
-                  </button>
-                </>
+              {hasLyrics && (
+                <button onClick={handleSing} style={btnPrimary}>
+                  {quality === "high" ? "🎶 この歌詞で歌を作る" : "🗣️ この歌詞を読み上げる"}
+                </button>
               )}
+              <button
+                onClick={handleGenerateLyrics}
+                disabled={selectedCount === 0}
+                style={{
+                  ...(hasLyrics ? btnSecondary : btnPrimary),
+                  opacity: selectedCount === 0 ? 0.5 : 1,
+                  cursor: selectedCount === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                {hasLyrics ? "🔄 歌詞をもう一回作る" : "✍️ 歌詞を作る"}
+              </button>
               <button onClick={handleReset} style={{ ...btnSecondary, fontSize: 13, color: "var(--muted-foreground)" }}>
                 ← 最初からやり直す
               </button>
@@ -613,7 +619,7 @@ export default function Home() {
           borderTop: "1px solid var(--border)",
         }}
       >
-        utango — 英単語が歌になる暗記アプリ
+        utango — 英単語が歌になる暗記アプリ（build {APP_BUILD}）
       </footer>
     </div>
   );
