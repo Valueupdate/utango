@@ -73,6 +73,33 @@ async def run_sing(job: Job, lyrics: str, api_key: str):
         await job.fail(str(e))
 
 
+# ─── ヘルパー: ジョブ状態のスナップショット ───────────
+def _job_snapshot(job: Job) -> dict:
+    """
+    現在のジョブ状態を SSE イベントと同じ形で返す。
+    SSE 再接続時やポーリング復帰時に、取り逃したイベントを補うために使う。
+    """
+    if job.status == "completed":
+        return {
+            "step": "done",
+            "progress": 100,
+            "download_url": job.download_url,
+            "lyrics": job.lyrics,
+            "word_pairs": job.word_pairs,
+        }
+    if job.status == "failed":
+        return {
+            "step": "error",
+            "progress": -1,
+            "message": job.error or "処理中にエラーが発生しました",
+        }
+    return {
+        "step": job.step,
+        "progress": job.progress,
+        "message": job.message,
+    }
+
+
 # ─── ヘルパー: APIキー解決 ────────────────────────────
 def _resolve_api_key(api_key: str) -> str:
     effective = api_key.strip() or FALLBACK_GEMINI_API_KEY
@@ -201,6 +228,13 @@ async def progress(job_id: str):
                 run_sing(job, meta["lyrics"], meta["api_key"])
             )
 
+        # 接続直後に現在の状態を必ず1件送る。
+        # これにより、切断後の再接続でも取り逃した完了・失敗を回収できる。
+        snapshot = _job_snapshot(job)
+        yield f"data: {json.dumps(snapshot, ensure_ascii=False)}\n\n"
+        if snapshot.get("step") in ("done", "error"):
+            return
+
         while True:
             try:
                 event = await asyncio.wait_for(job.queue.get(), timeout=30.0)
@@ -216,6 +250,25 @@ async def progress(job_id: str):
                 yield f"data: {json.dumps(keepalive, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/result/{job_id}")
+async def result(job_id: str):
+    """
+    ジョブの現在状態をポーリングで取得する。
+    SSE が切断された場合のフォールバック経路。
+    """
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="ジョブが見つかりません。有効期限が切れた可能性があります。",
+        )
+
+    snapshot = _job_snapshot(job)
+    snapshot["job_id"] = job.job_id
+    snapshot["status"] = job.status
+    return snapshot
 
 
 @app.get("/download/{job_id}")

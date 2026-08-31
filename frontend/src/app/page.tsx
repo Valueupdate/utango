@@ -15,13 +15,13 @@ export type AppState =
   | "done"
   | "error";
 export type Mode = "word" | "sentence";
-export type Quality = "standard" | "high";
 
 export interface WordPair {
   word: string;
   meaning: string;
 }
 
+// ProgressView.tsx が参照しているため残す（U-09 で ProgressView と共に整理予定）
 export interface LogEntry {
   step: string;
   message: string;
@@ -30,11 +30,35 @@ export interface LogEntry {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 const API_KEY_STORAGE = "utango_gemini_api_key";
 // ビルド識別子。画面に表示され、古いビルドを見ていないか判別するために使う
-const APP_BUILD = "2026-08-31b";
+const APP_BUILD = "2026-08-31d";
+
+// SSE が途中で切れた場合に /result をポーリングして結果を回収する
+async function pollResult(
+  apiUrl: string,
+  jobId: string,
+  onMessage: (message: string) => void
+): Promise<"done" | "error" | "timeout"> {
+  const intervalMs = 5000;
+  const maxAttempts = 60; // 最大約5分
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    try {
+      const res = await fetch(`${apiUrl}/result/${jobId}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.message) onMessage(data.message);
+      if (data.step === "done") return "done";
+      if (data.step === "error") return "error";
+    } catch {
+      // 一時的な通信エラーは無視して次の試行へ
+    }
+  }
+  return "timeout";
+}
 
 export default function Home() {
   const [state, setState] = useState<AppState>("idle");
-  const [quality, setQuality] = useState<Quality>("standard");
   const [mode, setMode] = useState<Mode>("word");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -159,14 +183,13 @@ export default function Home() {
     if (!editedLyrics.trim()) return;
 
     setState("singing");
-    setStatusMessage(quality === "high" ? "歌を作っています..." : "音声を作っています...");
+    setStatusMessage("歌を作っています...");
     setErrorMessage("");
 
     try {
       const formData = new FormData();
       formData.append("api_key", apiKey.trim());
       formData.append("lyrics", editedLyrics.trim());
-      formData.append("quality", quality);
 
       const res = await fetch(`${API_URL}/sing`, {
         method: "POST",
@@ -225,13 +248,26 @@ export default function Home() {
           }
         }
       }
+
+      // done を受け取る前にストリームが終了した場合はポーリングで復帰する
+      setStatusMessage("接続を確認しています...");
+      const recovered = await pollResult(API_URL, currentJobId, setStatusMessage);
+      if (recovered === "done") {
+        setState("done");
+        return;
+      }
+      throw new Error(
+        recovered === "timeout"
+          ? "生成の確認がとれませんでした。時間をおいてもう一度お試しください。"
+          : "処理中にエラーが発生しました。もう一度お試しください。"
+      );
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : "不明なエラー";
       setErrorMessage(message);
       setState("editing");
     }
-  }, [editedLyrics, apiKey, quality]);
+  }, [editedLyrics, apiKey]);
 
   // ─── リセット ───────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -274,18 +310,6 @@ export default function Home() {
     background: active ? "var(--primary)" : "var(--card)",
     color: active ? "var(--primary-foreground)" : "var(--foreground)",
     fontSize: 15,
-    fontWeight: 700,
-    cursor: "pointer",
-  });
-
-  const qualityButtonStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: "12px 8px",
-    borderRadius: 10,
-    border: active ? "2px solid var(--primary)" : "1px solid var(--border)",
-    background: active ? "var(--primary)" : "var(--card)",
-    color: active ? "var(--primary-foreground)" : "var(--foreground)",
-    fontSize: 14,
     fontWeight: 700,
     cursor: "pointer",
   });
@@ -488,40 +512,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* 音声モード選択（歌詞ができてから表示） */}
-            {hasLyrics && (
-              <div
-                style={{
-                  borderRadius: 16,
-                  background: "var(--card)",
-                  border: "1px solid var(--border)",
-                  padding: 16,
-                }}
-              >
-                <div style={{ marginBottom: 10 }}>
-                  <span style={{ fontSize: 15, fontWeight: 700 }}>🔊 音声モード</span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    onClick={() => setQuality("standard")}
-                    style={qualityButtonStyle(quality === "standard")}
-                  >
-                    🗣️ 読み上げ
-                    <br />
-                    <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>無料</span>
-                  </button>
-                  <button
-                    onClick={() => setQuality("high")}
-                    style={qualityButtonStyle(quality === "high")}
-                  >
-                    🎵 歌（Lyria）
-                    <br />
-                    <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>有料キー必要</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* エラー表示 */}
             {errorMessage && (
               <div
@@ -544,7 +534,7 @@ export default function Home() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {hasLyrics && (
                 <button onClick={handleSing} style={btnPrimary}>
-                  {quality === "high" ? "🎶 この歌詞で歌を作る" : "🗣️ この歌詞を読み上げる"}
+                  🎶 この歌詞で歌を作る
                 </button>
               )}
               <button
