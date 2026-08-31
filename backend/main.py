@@ -21,7 +21,9 @@ from config import (
     APP_VERSION, TEMP_DIR, FRONTEND_URL, EXTRA_CORS_ORIGINS,
     MAX_IMAGE_SIZE_BYTES, ALLOWED_IMAGE_EXTENSIONS,
     JOB_CLEANUP_INTERVAL_SECONDS, FALLBACK_GEMINI_API_KEY,
+    MAX_WORDS_PER_SONG,
 )
+
 from services.job_manager import job_manager, Job
 from services.vocab_service import extract_word_pairs
 from services.lyrics_service import generate_lyrics
@@ -158,7 +160,9 @@ async def extract(
     return {
         "word_pairs": word_pairs,
         "mode": mode,
+        "max_words_per_song": MAX_WORDS_PER_SONG,
     }
+
 
 
 @app.post("/lyrics")
@@ -181,13 +185,29 @@ async def lyrics_endpoint(
     if not word_pairs:
         raise HTTPException(status_code=400, detail="単語が選択されていません")
 
+    # 形式チェック（フロントで手動追加・編集できるため、空欄を弾く）
+    cleaned = []
+    for p in word_pairs:
+        if not isinstance(p, dict):
+            continue
+        word = str(p.get("word") or "").strip()
+        meaning = str(p.get("meaning") or "").strip()
+        if word and meaning:
+            cleaned.append({"word": word, "meaning": meaning})
+
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="英単語と和訳の両方が入力された単語がありません")
+
+    if len(cleaned) > MAX_WORDS_PER_SONG:
+        raise HTTPException(
+            status_code=400,
+            detail=f"1曲に入れられるのは{MAX_WORDS_PER_SONG}語までです（現在{len(cleaned)}語）",
+        )
+
     display_lyrics, pronunciation_lyrics = await generate_lyrics(
-        word_pairs, effective_key, mode
+        cleaned, effective_key, mode
     )
 
-    return {
-        "lyrics": display_lyrics,
-    }
 
 
 @app.post("/sing")

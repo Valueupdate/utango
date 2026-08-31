@@ -3,7 +3,10 @@
 
 Gemini Vision を使って、英単語帳の撮影画像から
 英単語・和訳のペアを構造化抽出する。
-docs/design/lyrics-design.md §6 のフォーマットに従う。
+
+抽出上限（MAX_EXTRACT_WORDS）と、1曲に入れる語数の上限
+（MAX_WORDS_PER_SONG）は別物として扱う。抽出はページ全体を読み取り、
+そこから何語を歌にするかはユーザーが選択する。
 """
 import os
 import json
@@ -11,22 +14,36 @@ import re
 import asyncio
 from typing import List, Dict
 
-from config import GEMINI_MODEL, MAX_WORDS_PER_SONG
+from config import GEMINI_MODEL, MAX_EXTRACT_WORDS, MAX_MEANINGS_PER_WORD
 
 EXTRACT_PROMPT = """あなたは英単語帳の画像を解析する専門家です。
-この画像から、英単語とその和訳のペアをすべて抽出してください。
+この画像から、見出しになっている英単語とその和訳のペアを「すべて」抽出してください。
 
-ルール:
-- 英単語（English word）と和訳（Japanese meaning）のペアのみを抽出する
-- 発音記号、例文、通し番号、ページ番号などは除外する
-- 和訳が複数ある場合は最も代表的な1つに絞る
-- 画像が不鮮明で読み取れない語はスキップする
+【抽出するもの】
+- 見出し語（太字・大きな文字で書かれた英単語）
+- その日本語訳
+
+【除外するもの】
+- 発音記号（[dɪváut] のような角括弧内の記号列）
+- 英語の同義語・言い換え（[= religious, pious] のような表記）
+- 派生語・関連語・コロケーション（intimacy、intimate friend など）
+- 例文とその和訳（ページ右側などにある文章）
+- 通し番号、ページ番号、章タイトル、品詞ラベル
+
+【和訳のルール】
+- 和訳が複数ある場合は「、」で区切って最大3つまで含める
+  例: "敬虔な、熱心な" / "最高の、最適の"
+- 記号（形、動、▶、=、丸囲み文字など）は和訳に含めない
+
+【重要】
+- 見出し語は1つも飛ばさず、ページに載っているものをすべて出力する
+- 画像が不鮮明で読み取れない語のみスキップする
 - 必ず以下のJSON形式のみを出力する（説明文やコードフェンスは不要）
 
 {
   "word_pairs": [
-    { "word": "apple", "meaning": "りんご" },
-    { "word": "ocean", "meaning": "海" }
+    { "word": "devout", "meaning": "敬虔な、熱心な" },
+    { "word": "optimum", "meaning": "最高の、最適の" }
   ]
 }
 """
@@ -65,7 +82,31 @@ def _get_image_mime_type(image_path: str) -> str:
     return mime_types.get(ext, "image/jpeg")
 
 
-def _parse_word_pairs(response_text: str) -> List[Dict[str, str]]:
+def _normalize_meaning(raw, mode: str) -> str:
+    """
+    和訳を「、」区切りの文字列に正規化する。
+
+    モデルが配列で返す場合（["敬虔な", "熱心な"]）と、
+    文字列で返す場合（"敬虔な、熱心な"）の両方を受け付ける。
+    英文モードは訳文をそのまま使うので分割しない。
+    """
+    if isinstance(raw, list):
+        items = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        if mode == "sentence":
+            return text
+        # 「、」「,」「/」「;」を区切りとみなす
+        items = [s.strip() for s in re.split(r"[、,／/;；]", text) if s.strip()]
+
+    if not items:
+        return ""
+    return "、".join(items[:MAX_MEANINGS_PER_WORD])
+
+
+def _parse_word_pairs(response_text: str, mode: str = "word") -> List[Dict[str, str]]:
     """AIレスポンスからword_pairsを取り出す。コードフェンス等を許容する。"""
     text = response_text.strip()
 
@@ -85,11 +126,19 @@ def _parse_word_pairs(response_text: str) -> List[Dict[str, str]]:
 
     pairs = data.get("word_pairs", [])
     result = []
+    seen = set()
     for p in pairs:
-        word = (p.get("word") or "").strip()
-        meaning = (p.get("meaning") or "").strip()
-        if word and meaning:
-            result.append({"word": word, "meaning": meaning})
+        if not isinstance(p, dict):
+            continue
+        word = str(p.get("word") or "").strip()
+        meaning = _normalize_meaning(p.get("meaning"), mode)
+        if not word or not meaning:
+            continue
+        key = word.lower()
+        if key in seen:          # 同じ見出し語の重複を除く
+            continue
+        seen.add(key)
+        result.append({"word": word, "meaning": meaning})
     return result
 
 
@@ -99,14 +148,10 @@ async def extract_word_pairs(
     """
     画像から英単語・和訳（または英文・和訳）のペアを抽出する。
 
-    Args:
-        image_path: 撮影画像のパス
-        api_key: ユーザーの Gemini API キー（BYOK）
-        mode: "word"（英単語）または "sentence"（英文）
-
     Returns:
-        [{"word": "apple", "meaning": "りんご"}, ...]
-        最大 MAX_WORDS_PER_SONG 件（超過分は先頭から採用）
+        [{"word": "devout", "meaning": "敬虔な、熱心な"}, ...]
+        最大 MAX_EXTRACT_WORDS 件。
+        1曲に入れる語数の絞り込みは UI 側で行う。
     """
     from google import genai
     from google.genai import types
@@ -138,17 +183,19 @@ async def extract_word_pairs(
                 contents=parts,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
-                    max_output_tokens=2000,
+                    # 単語帳1ページ分（数十語）を出し切れる余裕を持たせる
+                    max_output_tokens=8000,
                     thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             text = (response.text or "").strip()
-            pairs = _parse_word_pairs(text)
+            pairs = _parse_word_pairs(text, mode)
             if not pairs:
                 if mode == "sentence":
                     raise Exception("画像から英文を抽出できませんでした。鮮明な英文の画像をお試しください。")
                 raise Exception("画像から英単語を抽出できませんでした。鮮明な英単語帳の画像をお試しください。")
-            return pairs[:MAX_WORDS_PER_SONG]
+            print(f"[VocabService] Extracted {len(pairs)} pairs (mode={mode})")
+            return pairs[:MAX_EXTRACT_WORDS]
 
         except Exception as e:
             err_str = str(e)

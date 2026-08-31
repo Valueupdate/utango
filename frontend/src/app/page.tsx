@@ -30,7 +30,9 @@ export interface LogEntry {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 const API_KEY_STORAGE = "utango_gemini_api_key";
 // ビルド識別子。画面に表示され、古いビルドを見ていないか判別するために使う
-const APP_BUILD = "2026-08-31d";
+const APP_BUILD = "2026-08-31e";
+// backend が上限を返さなかった場合のフォールバック
+const DEFAULT_MAX_WORDS = 5;
 
 // SSE が途中で切れた場合に /result をポーリングして結果を回収する
 async function pollResult(
@@ -65,6 +67,10 @@ export default function Home() {
   const [apiKey, setApiKey] = useState<string>("");
   const [wordPairs, setWordPairs] = useState<WordPair[]>([]);
   const [selectedPairs, setSelectedPairs] = useState<boolean[]>([]);
+  const [maxWords, setMaxWords] = useState<number>(DEFAULT_MAX_WORDS);
+  const [newWord, setNewWord] = useState<string>("");
+  const [newMeaning, setNewMeaning] = useState<string>("");
+  const [hint, setHint] = useState<string>("");
   const [lyrics, setLyrics] = useState<string>("");
   const [editedLyrics, setEditedLyrics] = useState<string>("");
   const [jobId, setJobId] = useState<string>("");
@@ -89,7 +95,9 @@ export default function Home() {
     setPreviewUrl(URL.createObjectURL(selectedFile));
     setState("ready");
     setErrorMessage("");
+    setHint("");
     setWordPairs([]);
+    setSelectedPairs([]);
     setLyrics("");
     setEditedLyrics("");
     setJobId("");
@@ -110,6 +118,7 @@ export default function Home() {
     setState("extracting");
     setStatusMessage("画像から単語を読み取っています...");
     setErrorMessage("");
+    setHint("");
 
     try {
       const formData = new FormData();
@@ -132,8 +141,21 @@ export default function Home() {
       if (pairs.length === 0) {
         throw new Error("単語が見つかりませんでした。別の画像を試してください。");
       }
+
+      const limit =
+        typeof data.max_words_per_song === "number" && data.max_words_per_song > 0
+          ? data.max_words_per_song
+          : DEFAULT_MAX_WORDS;
+
+      setMaxWords(limit);
       setWordPairs(pairs);
-      setSelectedPairs(pairs.map(() => true));
+      // 上限を超える分はチェックを外した状態にして、ユーザーに選ばせる
+      setSelectedPairs(pairs.map((_, i) => i < limit));
+      setHint(
+        pairs.length > limit
+          ? `${pairs.length}語 読み取りました。1曲に入れられるのは${limit}語までなので、上から${limit}語を選んでいます。入れ替えて選び直せます。`
+          : ""
+      );
       setState("editing");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "不明なエラー";
@@ -144,8 +166,13 @@ export default function Home() {
 
   // ─── Step 2: 歌詞を生成（何度でも呼べる） ──────────
   const handleGenerateLyrics = useCallback(async () => {
-    const selected = wordPairs.filter((_, i) => selectedPairs[i]);
-    if (selected.length === 0) return;
+    const selected = wordPairs.filter(
+      (p, i) => selectedPairs[i] && p.word.trim() && p.meaning.trim()
+    );
+    if (selected.length === 0) {
+      setHint("歌に入れる単語を1つ以上選んでください。");
+      return;
+    }
 
     setState("generating-lyrics");
     setStatusMessage("キャッチーな歌詞を作っています...");
@@ -277,6 +304,10 @@ export default function Home() {
     setState("idle");
     setWordPairs([]);
     setSelectedPairs([]);
+    setMaxWords(DEFAULT_MAX_WORDS);
+    setNewWord("");
+    setNewMeaning("");
+    setHint("");
     setLyrics("");
     setEditedLyrics("");
     setJobId("");
@@ -291,17 +322,56 @@ export default function Home() {
     setErrorMessage("");
   }, []);
 
+  const selectedCount = selectedPairs.filter(Boolean).length;
+  const hasLyrics = lyrics.trim().length > 0;
+
+  // ─── 単語リストの操作 ───────────────────────────────
   const togglePair = (index: number) => {
+    const isSelected = selectedPairs[index];
+    if (!isSelected && selectedCount >= maxWords) {
+      setHint(`1曲に入れられるのは${maxWords}語までです。ほかの単語のチェックを外してから選んでください。`);
+      return;
+    }
     setSelectedPairs((prev) => {
       const next = [...prev];
       next[index] = !next[index];
       return next;
     });
+    setHint("");
   };
 
-  const selectedCount = selectedPairs.filter(Boolean).length;
-  const hasLyrics = lyrics.trim().length > 0;
+  const updatePair = (index: number, field: "word" | "meaning", value: string) => {
+    setWordPairs((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p))
+    );
+  };
 
+  const removePair = (index: number) => {
+    setWordPairs((prev) => prev.filter((_, i) => i !== index));
+    setSelectedPairs((prev) => prev.filter((_, i) => i !== index));
+    setHint("");
+  };
+
+  const addPair = () => {
+    const w = newWord.trim();
+    const m = newMeaning.trim();
+    if (!w || !m) {
+      setHint("英単語と和訳の両方を入力してください。");
+      return;
+    }
+    const canSelect = selectedCount < maxWords;
+    setWordPairs((prev) => [...prev, { word: w, meaning: m }]);
+    setSelectedPairs((prev) => [...prev, canSelect]);
+    setNewWord("");
+    setNewMeaning("");
+    setHint(
+      canSelect
+        ? ""
+        : `追加しました。選択が${maxWords}語に達しているため、この単語のチェックは外れています。`
+    );
+  };
+
+  // ─── スタイル ───────────────────────────────────────
   const modeButtonStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
     padding: "12px 8px",
@@ -336,6 +406,17 @@ export default function Home() {
     fontSize: 15,
     fontWeight: 600,
     cursor: "pointer",
+  };
+
+  const cellInput: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--background)",
+    color: "var(--foreground)",
+    fontSize: 14,
+    fontFamily: "inherit",
+    minWidth: 0,
   };
 
   return (
@@ -434,10 +515,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* ─── 編集画面: 単語選択 + 歌詞編集 ─── */}
+        {/* ─── 編集画面: 単語選択・編集・追加 + 歌詞編集 ─── */}
         {state === "editing" && (
           <>
-            {/* 単語選択 */}
             <div
               style={{
                 borderRadius: 16,
@@ -447,34 +527,123 @@ export default function Home() {
               }}
             >
               <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ fontSize: 15, fontWeight: 700 }}>
-                  📝 読み取った単語（{selectedCount}/{wordPairs.length}）
-                </span>
-                <span style={{ fontSize: 12, color: "var(--muted-foreground)", marginLeft: 8 }}>
-                  歌に入れる単語を選んでください
-                </span>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>
+                  📝 読み取った単語（選択 {selectedCount}/{maxWords} ・全 {wordPairs.length} 語）
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.6 }}>
+                  歌に入れる単語を{maxWords}語まで選べます。単語・訳はそのまま書き換えられます。
+                  訳が複数あるときは「、」で区切ってください。
+                </div>
               </div>
+
               {wordPairs.map((p, i) => (
                 <div
                   key={i}
-                  onClick={() => togglePair(i)}
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: 12,
-                    padding: "12px 16px",
+                    gap: 8,
+                    padding: "10px 12px",
                     borderBottom: i < wordPairs.length - 1 ? "1px solid var(--border)" : "none",
-                    cursor: "pointer",
-                    opacity: selectedPairs[i] ? 1 : 0.4,
+                    opacity: selectedPairs[i] ? 1 : 0.55,
                     background: selectedPairs[i] ? "transparent" : "var(--muted)",
                   }}
                 >
-                  <span style={{ fontSize: 18 }}>{selectedPairs[i] ? "☑️" : "⬜"}</span>
-                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{p.word}</span>
-                  <span style={{ fontSize: 14, color: "var(--muted-foreground)" }}>{p.meaning}</span>
+                  <button
+                    onClick={() => togglePair(i)}
+                    aria-label={selectedPairs[i] ? "選択を外す" : "選択する"}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      fontSize: 18,
+                      cursor: "pointer",
+                      padding: 0,
+                      lineHeight: 1,
+                    }}
+                  >
+                    {selectedPairs[i] ? "☑️" : "⬜"}
+                  </button>
+                  <input
+                    value={p.word}
+                    onChange={(e) => updatePair(i, "word", e.target.value)}
+                    placeholder="英単語"
+                    spellCheck={false}
+                    style={{ ...cellInput, flex: 1, fontWeight: 600 }}
+                  />
+                  <input
+                    value={p.meaning}
+                    onChange={(e) => updatePair(i, "meaning", e.target.value)}
+                    placeholder="和訳（例: 敬虔な、熱心な）"
+                    style={{ ...cellInput, flex: 1.2 }}
+                  />
+                  <button
+                    onClick={() => removePair(i)}
+                    aria-label="この単語を削除"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--muted-foreground)",
+                      fontSize: 16,
+                      cursor: "pointer",
+                      padding: "0 2px",
+                    }}
+                  >
+                    ✕
+                  </button>
                 </div>
               ))}
+
+              {/* 手動追加フォーム */}
+              <div style={{ padding: "12px", borderTop: "1px solid var(--border)", background: "var(--background)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>＋ 単語を自分で追加</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input
+                    value={newWord}
+                    onChange={(e) => setNewWord(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addPair(); }}
+                    placeholder="英単語"
+                    spellCheck={false}
+                    style={{ ...cellInput, flex: 1 }}
+                  />
+                  <input
+                    value={newMeaning}
+                    onChange={(e) => setNewMeaning(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addPair(); }}
+                    placeholder="和訳（「、」で複数OK）"
+                    style={{ ...cellInput, flex: 1.2 }}
+                  />
+                </div>
+                <button
+                  onClick={addPair}
+                  style={{
+                    ...btnSecondary,
+                    padding: "10px",
+                    fontSize: 14,
+                    borderColor: "var(--primary)",
+                    color: "var(--primary)",
+                  }}
+                >
+                  追加する
+                </button>
+              </div>
             </div>
+
+            {/* ヒント（上限・操作案内） */}
+            {hint && (
+              <div
+                style={{
+                  background: "var(--muted)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 12,
+                  padding: 12,
+                  fontSize: 13,
+                  color: "var(--muted-foreground)",
+                  lineHeight: 1.6,
+                }}
+              >
+                💡 {hint}
+              </div>
+            )}
 
             {/* 歌詞表示・編集エリア */}
             {hasLyrics && (

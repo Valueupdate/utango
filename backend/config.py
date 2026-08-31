@@ -56,8 +56,14 @@ GEMINI_MODEL = "models/gemini-2.5-flash"
 LYRIA_MODEL = "lyria-3-clip-preview"
 
 # ─── 歌詞・楽曲設定 ──────────────────────────────────
-# 1曲あたりの単語数上限（docs/design/lyrics-design.md §3 参照）
+# 1曲あたりの単語数上限（これを超える語はユーザーが選択で絞る）
 MAX_WORDS_PER_SONG = 5
+# 1回の画像解析で抽出する語数の上限。
+# 「1曲に入れる語数」とは別物。単語帳1ページ分を読み切れる余裕を持たせる。
+MAX_EXTRACT_WORDS = 40
+# 1語あたりに保持する和訳の最大数（「敬虔な、熱心な」のように「、」で連結）
+MAX_MEANINGS_PER_WORD = 3
+
 # 楽曲生成プロンプトに前置する楽曲指示
 MUSIC_STYLE_PROMPT = (
     "日本語と英語がまざったキャッチーなCMジングル。"
