@@ -199,6 +199,9 @@ async def lyrics_endpoint(
         if meaning:
             parts = [m.strip() for m in meaning.replace(",", "、").split("、") if m.strip()]
             meaning = "、".join(parts[:MAX_MEANINGS_PER_WORD])
+        if word and meaning:
+            cleaned.append({"word": word, "meaning": meaning})
+
 
     if not cleaned:
         raise HTTPException(status_code=400, detail="英単語と和訳の両方が入力された単語がありません")
