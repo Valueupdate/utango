@@ -21,8 +21,9 @@ from config import (
     APP_VERSION, TEMP_DIR, FRONTEND_URL, EXTRA_CORS_ORIGINS,
     MAX_IMAGE_SIZE_BYTES, ALLOWED_IMAGE_EXTENSIONS,
     JOB_CLEANUP_INTERVAL_SECONDS, FALLBACK_GEMINI_API_KEY,
-    MAX_WORDS_PER_SONG,
+    MAX_WORDS_PER_SONG, MAX_EXTRACT_WORDS, MAX_MEANINGS_PER_WORD,
 )
+
 
 from services.job_manager import job_manager, Job
 from services.vocab_service import extract_word_pairs
@@ -161,7 +162,10 @@ async def extract(
         "word_pairs": word_pairs,
         "mode": mode,
         "max_words_per_song": MAX_WORDS_PER_SONG,
+        "max_extract_words": MAX_EXTRACT_WORDS,
+        "max_meanings_per_word": MAX_MEANINGS_PER_WORD,
     }
+
 
 
 
@@ -192,8 +196,9 @@ async def lyrics_endpoint(
             continue
         word = str(p.get("word") or "").strip()
         meaning = str(p.get("meaning") or "").strip()
-        if word and meaning:
-            cleaned.append({"word": word, "meaning": meaning})
+        if meaning:
+            parts = [m.strip() for m in meaning.replace(",", "、").split("、") if m.strip()]
+            meaning = "、".join(parts[:MAX_MEANINGS_PER_WORD])
 
     if not cleaned:
         raise HTTPException(status_code=400, detail="英単語と和訳の両方が入力された単語がありません")
@@ -208,7 +213,19 @@ async def lyrics_endpoint(
         cleaned, effective_key, mode
     )
 
+    if not (display_lyrics or "").strip():
+        raise HTTPException(
+            status_code=502, detail="歌詞の生成に失敗しました（モデル応答が空でした）"
+        )
 
+    return {
+        "lyrics": display_lyrics,
+        "display_lyrics": display_lyrics,
+        "pronunciation_lyrics": pronunciation_lyrics or display_lyrics,
+        "words": cleaned,
+        "mode": mode,
+        "max_words_per_song": MAX_WORDS_PER_SONG,
+    }
 
 @app.post("/sing")
 async def sing(
