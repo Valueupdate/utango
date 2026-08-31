@@ -18,24 +18,43 @@ from config import GEMINI_MODEL
 # ─── 英単語モード用プロンプト ─────────────────────────
 LYRICS_PROMPT_TEMPLATE = """あなたは日本の暗記ソングの作詞家です。
 英単語の音を「実在する日本語のことば」に置きかえた語呂合わせで、
-20〜30秒で歌い切れる、くすっと笑える暗記ソングを作ってください。
+くすっと笑える暗記ソングを作ってください。
 
 単語ペア:
 {word_list}
 
 【最優先の絶対ルール（破ったら失格）】
-- 単語ごとに「英単語」「語呂合わせの日本語」「和訳」の3つを同じ行に入れる
 - 語呂合わせは、実在する日本語のことば・フレーズにする。
-  意味のない音のならび（例: おぷてぃむむ、いんちきめいと、でぶうっとり）は失格
+  意味のない音のならび（例: おぷてぃむむ、いんちきめいと）は失格
 - 英単語をカタカナに読みかえただけのものは語呂合わせではない。失格
-- 各行は、日本語の文として通じること。景色が目に浮かぶ一文にする
 - 和訳は上の「」の意味をそのまま使う。別の意味に言いかえたら失格
 - 漢字は使えないので、和訳はひらがなに直して書く（意味は変えず読みだけ変える）
-- 全体で {min_lines}〜{max_lines} 行
+
+【歌詞の組み立て（この形を必ずまもる。全体で {total_lines} 行）】
+- 1行目: [Verse]
+- つぎの {n}行: 単語ごとに1行ずつ。
+  その行に「英単語」「語呂合わせの日本語」「和訳（ひらがな）」の3つを必ず入れる
+- つぎの1行: サビ。ぜんぶの英単語と和訳を交互にならべる
+- つぎの1行: ぜんぶの英単語を使った かんたんな英文（5〜8語、現在形）
+- さいごの1行: その英文の和訳（ひらがな）
+- 英単語が入っていない行を書かない（さいごの和訳行だけは例外）
+- 日本語だけをならべた行、感想を言う行は失格
+  例:「おっと むすこも かめさんも きょうも まじめに いきてる」
+- 和訳と対応していない ことばの羅列も失格
+  例:「けいけん おだやか きんべん！ devout! placid! assiduous!」
+    …英単語と和訳がはなれていて、文にもなっていないのでおぼえられない
+
+【リズム（歌いやすさ）】
+- ひらがなは 3〜4文字の かたまりを つなげて書く。かたまりの間は半角スペース
+- 1行のひらがなは ぜんぶで 12〜17文字くらい（5・7・5 や 7・7 の調子）
+- 6文字をこえる長い かたまりを つくらない。切ってスペースを入れる
+- 英単語のあとに「は」「って」などの助詞を入れない
+  ×「devout は でっかい ぼうさん」
+  ○「devout でっかい ぼうさん」
 
 【日本的にする】
 - 題材は日本の暮らし。おふろ、こたつ、おまいり、おべんとう、えんがわ、
-  さんぽ、たなばた、おばあちゃん、こうえん、でんしゃ、たいやき など
+  さんぽ、たなばた、おばあちゃん、でんしゃ、たいやき など
 - ブラックジョーク、下品なネタ、皮肉は禁止。ほのぼのした笑いにする
 - 人の見た目や体型をからかうことば（でぶ、はげ など）は絶対に使わない
 - 「おぼえよう」「おぼえろ」「レッツラーン」などの教育的フレーズは禁止
@@ -44,21 +63,12 @@ LYRICS_PROMPT_TEMPLATE = """あなたは日本の暗記ソングの作詞家で�
 【良い歌詞の例】
 単語が devout（敬虔な）, placid（穏やかな）, assiduous（勤勉な）の場合:
 [Verse]
-devout は でっかい ぼうさん けいけんな かおで おまいり
-placid は プラスチックの おけ おだやかな おふろの ゆげ
-assiduous は あしを どうする？ きんべんな ありが ぎょうれつ
-でっかい ぼうさんも ありんこも きょうも まじめに あるいてる
-devout! placid! assiduous!
-
-（ポイント: でっかいぼうさん・プラスチックのおけ・あしをどうする は
- どれも日本語として意味が通じることば。音だけの断片にしていない）
-
-【失格の例】
-- 「optimum！ おぷてぃむむ！」…英単語をカタカナにしただけ
-- 「devout！ でぶ うっとり」…意味のない断片、しかも見た目をからかっている
-- 「intimate！ いんちき めいと」…日本語として意味が通じない
-- 和訳（けいけんな など）が歌詞のどこにも出てこない
-- 「○○ は △△ という いみです」のような説明くさい歌詞
+devout でっかい ぼうさん けいけんな おまいり
+placid プラスチック おけに おだやかな ゆげ
+assiduous あしを どうする きんべんな ありんこ
+devout けいけんな！ placid おだやかな！ assiduous きんべんな！
+The devout monk is placid and assiduous.
+けいけんな おぼうさん おだやかで きんべん
 
 【表記ルール】
 - にほんごは ぜんぶ ひらがな・カタカナ（かんじ きんし）
@@ -78,7 +88,7 @@ devout! placid! assiduous!
   ]
 }
 "used" には渡された単語すべてを必ず書く。
-"goro_imi" が書けないような音のならびは語呂合わせとして失格なので、作り直すこと。
+"goro_imi" が書けないような音のならびは失格なので、作り直すこと。
 """
 
 
@@ -161,38 +171,150 @@ def _find_missing(
     return missing
 
 _BANNED_WORDS = [
-    "でぶ", "デブ", "はげ", "ハゲ", "ちび", "ブス", "きちがい",
+    "でぶ", "デブ", "はげ", "ハゲ", "ちび", "ブス",
     "おぼえよう", "おぼえろ", "おぼえたかな", "レッツラーン", "べんきょうしよう",
 ]
 
 
-def _find_banned(lyrics: str) -> List[str]:
-    return [w for w in _BANNED_WORDS if w in lyrics]
+def _split_meanings(meaning: str) -> List[str]:
+    parts = [m.strip() for m in re.split(r"[、,，/／]", meaning) if m.strip()]
+    return parts or [meaning.strip()]
 
 
-def _find_weak_goro(used: List[Dict[str, str]]) -> List[str]:
-    """語呂の説明を書けていない＝音の羅列になっている語を返す"""
-    weak = []
-    for u in used:
-        if not isinstance(u, dict):
+def _format_word_list(word_pairs: List[Dict[str, str]]) -> str:
+    lines = []
+    for i, p in enumerate(word_pairs, 1):
+        ms = _split_meanings(p["meaning"])
+        extra = f"（ほかの訳: {'・'.join(ms[1:])}）" if len(ms) > 1 else ""
+        lines.append(f"{i}. {p['word']} = 「{ms[0]}」{extra}")
+    return "\n".join(lines)
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"[\s！!？?、。,\.〜~ー・]", "", text).lower()
+
+
+def _kana_only(text: str) -> str:
+    return re.sub(r"[^ぁ-んァ-ヶー]", "", text)
+
+
+def _count_words(line: str, word_pairs: List[Dict[str, str]]) -> int:
+    low = line.lower()
+    return sum(1 for p in word_pairs if p["word"].strip().lower() in low)
+
+
+def _filler_indices(lyrics: str, word_pairs: List[Dict[str, str]]) -> List[int]:
+    """英単語も和訳も入っていない、おぼえる価値のない行の位置"""
+    lines = lyrics.splitlines()
+    idx = []
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s or s.startswith("[") or re.search(r"[A-Za-z]", s):
             continue
-        goro = str(u.get("goro") or "").strip()
-        imi = str(u.get("goro_imi") or "").strip()
-        if not goro or not imi or len(imi) < 4:
-            weak.append(str(u.get("word") or "").strip())
-    return [w for w in weak if w]
+        prev = lines[i - 1].strip() if i > 0 else ""
+        if _count_words(prev, word_pairs) >= 2:
+            continue  # 直前の英文の和訳行なので残す
+        idx.append(i)
+    return idx
+
+
+def _strip_filler(lyrics: str, word_pairs: List[Dict[str, str]]) -> str:
+    drop = set(_filler_indices(lyrics, word_pairs))
+    return "\n".join(
+        ln for i, ln in enumerate(lyrics.splitlines()) if i not in drop
+    ).strip()
+
+
+def _drop_particles(lyrics: str) -> str:
+    """英単語の直後の「は」「って」を落とす"""
+    return re.sub(r"([A-Za-z][A-Za-z\-']*)\s*(?:は|って)\s+", r"\1 ", lyrics)
+
+
+def _audit(
+    lyrics: str, used: List[Dict[str, str]], word_pairs: List[Dict[str, str]]
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    """歌詞を検査して (問題点リスト, 和訳が落ちた語リスト) を返す"""
+    kana_map = {
+        str(u.get("word", "")).strip().lower(): str(u.get("kana", "")).strip()
+        for u in used if isinstance(u, dict)
+    }
+    flat = _normalize(lyrics)
+    problems: List[str] = []
+    missing: List[Dict[str, str]] = []
+
+    for p in word_pairs:
+        word = p["word"].strip()
+        main = _split_meanings(p["meaning"])[0]
+        kana = kana_map.get(word.lower(), "")
+        word_ok = _normalize(word) in flat
+        kana_ok = bool(kana) and _normalize(kana) in flat
+        if not (word_ok and kana_ok):
+            reason = "英単語が歌詞にない" if not word_ok else "和訳が歌詞にない"
+            missing.append({"word": word, "meaning": main, "kana": kana})
+            problems.append(f"- {word}（和訳「{main}」）: {reason}")
+
+    weak = [
+        str(u.get("word") or "").strip() for u in used
+        if isinstance(u, dict)
+        and (not str(u.get("goro") or "").strip()
+             or len(str(u.get("goro_imi") or "").strip()) < 4)
+    ]
+    if any(weak):
+        problems.append(
+            "- 語呂合わせが日本語として意味をなしていない: "
+            + "・".join(w for w in weak if w)
+        )
+
+    banned = [w for w in _BANNED_WORDS if w in lyrics]
+    if banned:
+        problems.append("- 使ってはいけないことばが入っている: " + "・".join(banned))
+
+    lines = lyrics.splitlines()
+    filler = [lines[i].strip() for i in _filler_indices(lyrics, word_pairs)]
+    if filler:
+        problems.append(
+            "- 英単語も和訳も入っていない行がある（不要）: " + " / ".join(filler)
+        )
+
+    long_chunks = []
+    for ln in lines:
+        s = ln.strip()
+        if not s or s.startswith("["):
+            continue
+        for chunk in re.split(r"[\s！!、。,\.]+", s):
+            if len(_kana_only(chunk)) > 7:
+                long_chunks.append(chunk)
+    if long_chunks:
+        problems.append(
+            "- ひらがなの かたまりが長くて歌いにくい（3〜4文字ずつに切る）: "
+            + " / ".join(long_chunks)
+        )
+
+    stripped = [ln.strip() for ln in lines if ln.strip()]
+    has_summary = any(
+        _count_words(ln, word_pairs) >= 2
+        and i + 1 < len(stripped)
+        and not re.search(r"[A-Za-z]", stripped[i + 1])
+        and len(_kana_only(stripped[i + 1])) >= 6
+        for i, ln in enumerate(stripped)
+    )
+    if not has_summary:
+        problems.append("- さいごの『ぜんぶの単語を使った英文』と『その和訳』の2行がない")
+
+    return problems, missing
 
 
 def _parse_lyrics_json(response_text: str) -> Tuple[str, List[Dict[str, str]]]:
+    """AIレスポンスから lyrics と used を取り出す"""
     text = response_text.strip()
-    fence_match = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1).strip()
+    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
 
-    brace_start, brace_end = text.find("{"), text.rfind("}")
-    if brace_start != -1 and brace_end > brace_start:
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
         try:
-            data = json.loads(text[brace_start:brace_end + 1])
+            data = json.loads(text[start:end + 1])
             lyrics = (data.get("lyrics") or "").strip()
             used = data.get("used") or []
             if lyrics:
@@ -220,16 +342,15 @@ async def generate_lyrics(
         raise Exception("歌詞を生成する単語がありません")
 
     client = genai.Client(api_key=api_key)
-    word_list = _format_word_list(word_pairs)
     n = len(word_pairs)
     template = (
         LYRICS_PROMPT_TEMPLATE_SENTENCE if mode == "sentence"
         else LYRICS_PROMPT_TEMPLATE
     )
     base_prompt = (
-        template.replace("{word_list}", word_list)
-        .replace("{min_lines}", str(max(4, n * 2)))
-        .replace("{max_lines}", str(max(6, n * 2 + 2)))
+        template.replace("{word_list}", _format_word_list(word_pairs))
+        .replace("{n}", str(n))
+        .replace("{total_lines}", str(n + 4))
     )
 
     async def _call(prompt_text: str) -> Tuple[str, List[Dict[str, str]]]:
@@ -253,11 +374,10 @@ async def generate_lyrics(
                 return _parse_lyrics_json(raw)
             except Exception as e:
                 err = str(e)
-                retryable = any(
-                    k in err for k in
-                    ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE",
-                     "high demand", "try again later")
-                )
+                retryable = any(k in err for k in (
+                    "429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE",
+                    "high demand", "try again later",
+                ))
                 if retryable and attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                     continue
@@ -265,50 +385,40 @@ async def generate_lyrics(
         raise Exception("歌詞を生成できませんでした")
 
     lyrics, used = await _call(base_prompt)
-    missing = _find_missing(lyrics, word_pairs, used)
-    banned = _find_banned(lyrics)
-    weak = _find_weak_goro(used)
+    problems, missing = _audit(lyrics, used, word_pairs)
 
-    if missing or banned or weak:
-        problems = []
-        if missing:
-            problems += [
-                f"- {m['word']}（和訳「{m['meaning']}」）: {m['reason']}" for m in missing
-            ]
-        if banned:
-            problems.append(
-                f"- 使ってはいけないことばが入っている: {'・'.join(banned)}"
-            )
-        if weak:
-            problems.append(
-                f"- 語呂合わせが日本語として意味をなしていない: {'・'.join(weak)}"
-            )
+    # 問題があれば、指摘して1回だけ書き直させる
+    if problems:
         fix_prompt = (
             f"{base_prompt}\n\n"
             "【やり直しの指示】\n"
             "さきほど作った歌詞は次の点で失格でした:\n"
             + "\n".join(problems)
             + "\n実在する日本語のことばを使った語呂合わせに直し、"
-            "英単語と和訳の両方が出てくるように全文を作り直してください。\n"
+            "決められた行の組み立てを守って全文を作り直してください。\n"
             f"さきほどの歌詞:\n{lyrics}\n"
         )
         try:
             r_lyrics, r_used = await _call(fix_prompt)
-            r_score = (
-                len(_find_missing(r_lyrics, word_pairs, r_used))
-                + len(_find_banned(r_lyrics))
-                + len(_find_weak_goro(r_used))
-            )
-            if r_score < len(missing) + len(banned) + len(weak):
+            r_problems, r_missing = _audit(r_lyrics, r_used, word_pairs)
+            if len(r_problems) < len(problems):
                 lyrics, used = r_lyrics, r_used
-                missing = _find_missing(lyrics, word_pairs, used)
+                problems, missing = r_problems, r_missing
         except Exception:
             pass
 
-    # それでも落ちている語は、機械的に対句を足して和訳を必ず載せる
+    # 後処理: 不要な行を落とし、英単語のあとの助詞を消す
+    candidate = _drop_particles(_strip_filler(lyrics, word_pairs))
+    if candidate:
+        _, cand_missing = _audit(candidate, used, word_pairs)
+        if len(cand_missing) <= len(missing):
+            lyrics, missing = candidate, cand_missing
+
+    # それでも和訳が落ちている語は、機械的に足して必ず載せる
     if missing:
-        extra = [f"{m['word']}！ {m['kana'] or m['meaning']}！" for m in missing]
-        lyrics = lyrics.rstrip() + "\n" + "\n".join(extra)
+        lyrics = lyrics.rstrip() + "\n" + "\n".join(
+            f"{m['word']}！ {m['kana'] or m['meaning']}！" for m in missing
+        )
 
     return lyrics, lyrics
 
