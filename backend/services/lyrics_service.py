@@ -35,9 +35,10 @@ LYRICS_PROMPT_TEMPLATE = """あなたは日本の暗記ソングの作詞家で�
 - つぎの {n}行: 単語ごとに1行ずつ。
   その行に「英単語」「語呂合わせの日本語」「和訳（ひらがな）」の3つを必ず入れる
 - つぎの1行: サビ。ぜんぶの英単語と和訳を交互にならべる
-- つぎの1行: ぜんぶの英単語を使った かんたんな英文（5〜8語、現在形）
-- さいごの1行: その英文の和訳（ひらがな）
-- 英単語が入っていない行を書かない（さいごの和訳行だけは例外）
+{summary_rule}
+- 英文には、渡された英単語を1つのこらず使う。使っていない単語があったら失格
+- 英文は不自然でもよいので、とにかく全部の単語を入れることを優先する
+- 英単語が入っていない行を書かない（英文の和訳行だけは例外）
 - 日本語だけをならべた行、感想を言う行は失格
   例:「おっと むすこも かめさんも きょうも まじめに いきてる」
 - 和訳と対応していない ことばの羅列も失格
@@ -70,6 +71,13 @@ devout けいけんな！ placid おだやかな！ assiduous きんべんな！
 The devout monk is placid and assiduous.
 けいけんな おぼうさん おだやかで きんべん
 
+単語が devout, placid, assiduous, pertinent, optimum の5語の場合の
+さいごの4行の例:
+The devout monk is placid and assiduous.
+けいけんな おぼうさん おだやかで きんべん
+His pertinent advice is optimum for us.
+かれの てきせつな アドバイス さいこうだね
+
 【表記ルール】
 - にほんごは ぜんぶ ひらがな・カタカナ（かんじ きんし）
 - えいたんごは えいご の まま（カタカナに しない）
@@ -90,7 +98,6 @@ The devout monk is placid and assiduous.
 "used" には渡された単語すべてを必ず書く。
 "goro_imi" が書けないような音のならびは失格なので、作り直すこと。
 """
-
 
 # ─── 英文モード用プロンプト ───────────────────────────
 LYRICS_PROMPT_TEMPLATE_SENTENCE = """あなたは下品で最高に笑えるダジャレCMソングの作詞家です。
@@ -291,16 +298,35 @@ def _audit(
         )
 
     stripped = [ln.strip() for ln in lines if ln.strip()]
-    has_summary = any(
-        _count_words(ln, word_pairs) >= 2
-        and i + 1 < len(stripped)
-        and not re.search(r"[A-Za-z]", stripped[i + 1])
-        and len(_kana_only(stripped[i + 1])) >= 6
-        for i, ln in enumerate(stripped)
-    )
-    if not has_summary:
-        problems.append("- さいごの『ぜんぶの単語を使った英文』と『その和訳』の2行がない")
+    covered = set()
+    sentence_found = False
+    for i, ln in enumerate(stripped[:-1]):
+        nxt = stripped[i + 1]
+        if re.search(r"[A-Za-z]", nxt):
+            continue
+        if len(_kana_only(nxt)) < 6:
+            continue
+        # 対象単語以外の英語（is, and, the など）が2つ以上あれば「英文」と判定
+        tokens = re.findall(r"[A-Za-z][A-Za-z\-']*", ln)
+        targets = {p["word"].strip().lower() for p in word_pairs}
+        others = [t for t in tokens if t.lower() not in targets]
+        if len(others) < 2:
+            continue
+        sentence_found = True
+        covered |= {t.lower() for t in tokens if t.lower() in targets}
 
+    if not sentence_found:
+        problems.append("- さいごの『ぜんぶの単語を使った英文』と『その和訳』がない")
+    else:
+        uncovered = [
+            p["word"] for p in word_pairs
+            if p["word"].strip().lower() not in covered
+        ]
+        if uncovered:
+            problems.append(
+                "- さいごの英文に入っていない単語がある（英文を2文に分けて全部入れる）: "
+                + "・".join(uncovered)
+            )
     return problems, missing
 
 
@@ -347,11 +373,28 @@ async def generate_lyrics(
         LYRICS_PROMPT_TEMPLATE_SENTENCE if mode == "sentence"
         else LYRICS_PROMPT_TEMPLATE
     )
+    if n <= 3:
+        summary_rule = (
+            "- つぎの1行: ぜんぶの英単語を使った かんたんな英文（5〜8語、現在形）\n"
+            "- さいごの1行: その英文の和訳（ひらがな）"
+        )
+        total_lines = n + 4
+    else:
+        summary_rule = (
+            "- つぎの1行: 英単語3つを使った英文（5〜8語、現在形）\n"
+            "- つぎの1行: その英文の和訳（ひらがな）\n"
+            "- つぎの1行: のこりの英単語ぜんぶを使った英文（5〜8語、現在形）\n"
+            "- さいごの1行: その英文の和訳（ひらがな）"
+        )
+        total_lines = n + 6
+
     base_prompt = (
         template.replace("{word_list}", _format_word_list(word_pairs))
         .replace("{n}", str(n))
-        .replace("{total_lines}", str(n + 4))
+        .replace("{summary_rule}", summary_rule)
+        .replace("{total_lines}", str(total_lines))
     )
+
 
     async def _call(prompt_text: str) -> Tuple[str, List[Dict[str, str]]]:
         parts = [types.Part.from_text(text=prompt_text)]
